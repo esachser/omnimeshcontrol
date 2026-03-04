@@ -366,10 +366,10 @@ Following the project's architectural rules, here is how the components map to t
 
 ## Future Work (Subsequent RFCs)
 
-- **RFC-0002**: Traffic policies — routing rules, retries, circuit breaking, load balancing.
-- **RFC-0003**: Observability — metrics collection, distributed tracing, access logging.
-- **RFC-0004**: High availability — control plane replication, leader election, state sync.
-- **RFC-0005**: Authorization policies — service-to-service access control rules.
+- **RFC-0002**: High availability — control plane replication, leader election, state sync.
+- **RFC-0003**: Traffic policies — routing rules, retries, circuit breaking, load balancing.
+- **RFC-0004**: Authorization policies — service-to-service access control rules.
+- **RFC-0005**: Observability — metrics collection, distributed tracing, access logging.
 - **RFC-0006**: Kubernetes integration — CRD-based configuration, operator, DaemonSet deployment.
 - **RFC-0007**: Waypoint proxies — optional L7 processing nodes for advanced traffic management (header routing, retries, rate limiting) beyond what the ambient agent provides.
 

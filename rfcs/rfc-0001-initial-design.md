@@ -18,7 +18,115 @@ Enterprise environments run services across heterogeneous infrastructure: bare-m
 
 ## Proposed Solution
 
-### 1. High-Level Architecture
+### 1. Declarative Resource Model
+
+All mesh configuration is expressed as **typed resources** following a format inspired by Kubernetes CRDs. Every object in the control plane — services, policies, nodes, namespaces — is a resource with a uniform structure:
+
+```go
+// Domain model — internal/domain/model/
+
+type Resource struct {
+    APIVersion string           // e.g., "core.omnimesh.io/v1"
+    Kind       string           // e.g., "Service", "TrafficPolicy"
+    Metadata   ResourceMetadata
+    Spec       interface{}      // Kind-specific specification
+}
+
+type ResourceMetadata struct {
+    Name        string
+    Namespace   string            // Empty for cluster-scoped resources
+    Labels      map[string]string // User-defined key-value labels
+    Annotations map[string]string // Non-identifying metadata
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
+    Revision    int64             // etcd mod revision — for optimistic concurrency
+}
+```
+
+#### 1.1 API Groups
+
+Resources are organized into **API groups** that correspond to functional domains:
+
+| API Group | Description | Resource Kinds |
+| --- | --- | --- |
+| `core.omnimesh.io/v1` | Core mesh infrastructure | `Namespace`, `Service`, `Node` |
+| `traffic.omnimesh.io/v1` | Traffic management | `TrafficPolicy` |
+| `security.omnimesh.io/v1` | Authorization & security | `AuthorizationPolicy` |
+
+API groups provide **versioning** (breaking changes become v2 while v1 keeps working), **scoping** (operators reason about which domain a resource belongs to), and **extensibility** (new groups added without touching existing ones).
+
+#### 1.2 Resource Scoping
+
+| Scope | Meaning | Examples |
+| --- | --- | --- |
+| **Namespaced** | Lives within a namespace. Name is unique within its namespace. | `Service`, `TrafficPolicy`, `AuthorizationPolicy` |
+| **Cluster-scoped** | Global. Name is unique across the entire mesh. | `Namespace`, `Node` |
+
+#### 1.3 `omnimeshctl apply` — Declarative Configuration
+
+The primary way to manage mesh configuration is `omnimeshctl apply`:
+
+```bash
+# Apply a single resource from a YAML file
+omnimeshctl apply -f service.yaml
+
+# Apply all YAML files in a directory
+omnimeshctl apply -f ./production/
+
+# Dry-run (validate without applying)
+omnimeshctl apply -f service.yaml --dry-run
+
+# Delete a resource described in a file
+omnimeshctl delete -f service.yaml
+```
+
+`apply` is an **upsert** operation:
+1. If the resource does not exist → **create** it.
+2. If the resource exists → **update** it (merge spec, preserve system metadata like `createdAt`).
+3. **Optimistic concurrency** — `metadata.revision` is checked on update. Conflicts are rejected.
+
+A single YAML file can contain multiple resources, separated by `---`.
+
+Imperative CLI commands (`service register`, etc.) remain as **convenience wrappers** around `apply` — they construct resources internally and call the same apply path. `apply` is preferred for production, automation, and GitOps workflows.
+
+#### 1.4 Reading Resources
+
+```bash
+# Get a specific resource
+omnimeshctl get service order-service -n production
+
+# List resources of a kind
+omnimeshctl get services -n production
+omnimeshctl get namespaces
+omnimeshctl get nodes
+
+# Output as YAML (for re-applying or version control)
+omnimeshctl get service order-service -n production -o yaml
+
+# List across all namespaces
+omnimeshctl get services --all-namespaces
+
+# Filter by labels
+omnimeshctl get services -l team=commerce -n production
+```
+
+#### 1.5 Labels and Selectors
+
+Resources support **labels** — arbitrary key-value pairs for user-defined organization:
+
+```yaml
+metadata:
+  labels:
+    team: commerce
+    tier: backend
+    environment: production
+```
+
+Labels enable filtering in `omnimeshctl get` queries, grouping in observability dashboards, and future policy targeting by label selector.
+
+---
+
+### 2. High-Level Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -43,10 +151,10 @@ Enterprise environments run services across heterogeneous infrastructure: bare-m
         │            │        │        │               │
    Agent Nodes     Admin   SPIRE    CoreDNS      BGP Peers /
    (self-register) (CLI)  Server   Instance     gRPC Nodes /
-                                                NATS Cluster
+                                                 NATS Cluster
 ```
 
-### 2. Cross-Platform Support & Ambient Mode
+### 3. Cross-Platform Support & Ambient Mode
 
 The control plane binary itself runs on **Linux, Windows, and macOS**. Every platform uses a **per-node Omnimesh Agent** that transparently intercepts mesh traffic — there are no sidecar proxies.
 
@@ -102,7 +210,7 @@ The agent handles:
 
 Platform-specific behavior lives exclusively in agent-side adapters. The control plane itself is OS-agnostic — it deals only with abstract service, identity, and routing concepts.
 
-### 3. Identity & Security — SPIFFE / SPIRE
+### 4. Identity & Security — SPIFFE / SPIRE
 
 All mesh services receive a **SPIFFE ID** in the form:
 
@@ -142,35 +250,39 @@ The control plane owns an **outbound port** `IdentityManager` with operations li
 
 The SPIRE adapter implements this port. If a different identity provider is needed in the future, only the adapter changes.
 
-### 4. Mesh IP Addressing (IPAM)
+### 5. Namespace — First-Class Resource
 
-Each service in the mesh is assigned a unique **IPv4 address** from a configurable CIDR block (e.g., `100.64.0.0/10`).
+Namespaces are explicit, creatable, listable, and deletable resources. They group services and policies into organizational and isolation units.
 
-#### Domain Model
-
-```go
-// Example domain concepts (not final API)
-
-type MeshNetwork struct {
-    CIDR       netip.Prefix   // e.g., 100.64.0.0/10
-    Allocations map[ServiceID]netip.Addr
-}
-
-type ServiceID struct {
-    Namespace string
-    Name      string
-}
+```yaml
+apiVersion: core.omnimesh.io/v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    environment: prod
+    team: platform
+spec:
+  isolation: strict    # "strict" (default-deny within) or "open"
 ```
+
+- A namespace must exist before any namespaced resource can be created within it.
+- Deleting a namespace that contains resources is rejected (unless `--force` is used).
+- Namespace isolation mode controls authorization defaults within the namespace (see RFC-0004).
+
+### 6. Mesh IP Addressing (IPAM)
+
+Each service in the mesh is assigned a unique **IPv4 address** from a configurable CIDR block (e.g., `100.64.0.0/10`). **Every service gets an IP assigned at registration time, even if no other service calls it yet.** This allows operators to pre-configure authorization policies and routing before callers exist.
 
 #### Allocation Rules
 
 1. The control plane maintains the authoritative IP allocation table.
-2. IPs are assigned on `RegisterService` and released on `DeregisterService`.
+2. IPs are assigned on service `apply` and released on service `delete`.
 3. Allocations are persisted to survive control plane restarts.
 4. Conflicts are detected and rejected at assignment time.
 5. The mesh CIDR is configurable at startup and cannot overlap with the enterprise network.
 
-### 5. DNS — CoreDNS Integration
+### 7. DNS — CoreDNS Integration
 
 Mesh service names are resolvable via a **CoreDNS** instance managed alongside the control plane.
 
@@ -214,7 +326,7 @@ type DNSRecordManager interface {
 
 The CoreDNS adapter implements this port. This allows future alternatives (e.g., direct etcd writes, cloud DNS APIs) without domain changes.
 
-### 6. Route Distribution — Pluggable Transport
+### 8. Route Distribution — Pluggable Transport
 
 The control plane must inform nodes about how to reach mesh IPs. The actual transport is **pluggable** — different environments may prefer different mechanisms.
 
@@ -259,85 +371,150 @@ type MeshRoute struct {
 
 Multiple adapters can be active simultaneously (e.g., BGP for datacenter nodes + gRPC push for Kubernetes agents). The application layer fans out to all configured distributors.
 
-### 7. Service Registration
+### 9. Core Resource Definitions
 
-Services enter the mesh through two mechanisms:
+#### 9.1 Service (`core.omnimesh.io/v1`)
 
-#### 7.1 CLI Registration (Administrative)
+**Scope**: Namespaced
 
-An administrator uses the `omnimeshctl` CLI to register, update, or deregister services:
+```yaml
+apiVersion: core.omnimesh.io/v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: production
+  labels:
+    team: commerce
+    tier: backend
+spec:
+  protocol: http                  # tcp, http, grpc — determines agent L4/L7 capabilities
+  endpoints:
+    - address: "10.0.1.5:8080"
+      weight: 100
+    - address: "10.0.1.6:8080"
+      weight: 100
+  healthCheck:
+    protocol: http
+    path: "/healthz"
+    intervalSec: 10
+    timeoutSec: 3
+    healthyAfter: 2
+    unhealthyAfter: 3
+  dependsOn:                      # Explicit upstream dependencies
+    - payment-service
+    - inventory-service
+```
+
+The `protocol` field (TCP, HTTP, gRPC) determines what level of traffic control the ambient agent can apply — see RFC-0003 for details.
+
+#### 9.2 Node (`core.omnimesh.io/v1`)
+
+**Scope**: Cluster
+
+```yaml
+apiVersion: core.omnimesh.io/v1
+kind: Node
+metadata:
+  name: node-1
+  labels:
+    os: linux
+    zone: us-east-1a
+spec:
+  platform: linux                 # linux, windows, macos, kubernetes
+  grpcAddr: "10.0.1.5:8443"
+  localServices:
+    - namespace: production
+      name: order-service
+    - namespace: production
+      name: frontend
+```
+
+### 10. Service Registration
+
+Services enter the mesh through two mechanisms — both result in a `Service` resource being applied:
+
+#### 10.1 CLI / Apply Registration (Administrative)
 
 ```bash
-# Register a new service
+# Declarative (preferred for production/GitOps)
+omnimeshctl apply -f service.yaml
+
+# Imperative (convenience wrapper — constructs a resource and calls apply)
 omnimeshctl service register \
   --name my-api \
   --namespace production \
+  --protocol http \
   --endpoints 10.0.1.5:8080,10.0.1.6:8080
-
-# Deregister a service
-omnimeshctl service deregister --name my-api --namespace production
-
-# List services
-omnimeshctl service list --namespace production
 ```
 
-The CLI communicates with the control plane via gRPC.
+#### 10.2 Agent Self-Registration (Automatic / Ambient)
 
-#### 7.2 Agent Self-Registration (Automatic / Ambient)
-
-Omnimesh Agents running on each node (as a system service on bare-metal/VMs, or as a DaemonSet on Kubernetes) can register themselves and the services they discover locally:
+Omnimesh Agents running on each node register themselves and the services they discover locally:
 
 ```
-┌───────────────┐   gRPC: RegisterNode / RegisterService   ┌──────────────┐
-│  Omnimesh     │ ────────────────────────────────────────► │  Control     │
-│  Agent (node) │ ◄──────────────────────────────────────── │  Plane       │
-│  (ambient)    │   gRPC: RouteUpdates stream               │              │
-└───────────────┘                                           └──────────────┘
+┌───────────────┐   gRPC: Apply(Node), Apply(Service)   ┌──────────────┐
+│  Omnimesh     │ ──────────────────────────────────────► │  Control     │
+│  Agent (node) │ ◄──────────────────────────────────── │  Plane       │
+│  (ambient)    │   gRPC: Scoped state stream             │              │
+└───────────────┘                                         └──────────────┘
 ```
 
-- Agents register themselves with a `RegisterNode` call providing platform info (OS, K8s node name, capabilities).
-- On Kubernetes, agents automatically discover pods on their node via the kubelet API or the downward API and register them as mesh services.
+- Agents apply a `Node` resource providing platform info (OS, K8s node name, capabilities).
+- On Kubernetes, agents discover pods on their node via the kubelet API and apply `Service` resources for them.
 - On non-Kubernetes platforms, agents discover local services via configuration files or OS-level process inspection.
-- The control plane pushes route updates and configuration back to the agent over a bidirectional gRPC stream.
+- The control plane pushes scoped route and policy updates back to the agent over a bidirectional gRPC stream.
 - If an agent disconnects, the control plane marks its services as unhealthy after a configurable grace period.
 
-### 8. Hexagonal Architecture Mapping
+### 11. Resource Validation
+
+Every resource goes through a two-phase validation pipeline before being persisted:
+
+**Phase 1 — Structural**: `apiVersion` is a known group/version, `kind` is valid within the group, `metadata.name` follows naming rules (lowercase alphanumeric + hyphens, 1–63 chars), `metadata.namespace` exists (for namespaced resources), `spec` conforms to the kind's schema.
+
+**Phase 2 — Semantic**: Cross-resource validation (e.g., health check protocol must be compatible with service protocol, policy target service must exist, SPIFFE IDs must be well-formed).
+
+### 12. Hexagonal Architecture Mapping
 
 Following the project's architectural rules, here is how the components map to the hex arch layers:
 
 #### Domain Layer (`internal/domain`)
 
-- `model.Service` — service entity with namespace, name, mesh IP, endpoints, health.
+- `model.Resource` — the universal resource envelope (apiVersion + kind + metadata + spec).
+- `model.ResourceMetadata` — name, namespace, labels, annotations, timestamps, revision.
+- `model.Service` — service entity with namespace, name, protocol, mesh IP, endpoints, health.
 - `model.MeshNetwork` — CIDR block, IP allocation table.
-- `model.Node` — agent node entity with platform (linux/windows/macos/k8s-node), ambient mode capabilities, status, registered services.
+- `model.Node` — agent node entity with platform, ambient mode capabilities, status, registered services.
 - `model.MeshRoute` — route to a mesh IP via one or more node endpoints.
 - `service.IPAllocator` — domain logic for IP assignment from a CIDR.
+- `service.ResourceValidator` — structural and semantic validation for all resource kinds.
 
 #### Ports (`internal/port`)
 
 **Inbound (use cases):**
 
-- `ServiceRegistrar` — register / deregister / list services.
+- `ResourceManager` — generic apply / get / list / delete for all resource kinds.
+- `ServiceRegistrar` — register / deregister / list services (delegates to `ResourceManager`).
 - `NodeRegistrar` — register / deregister / heartbeat nodes.
 
 **Outbound (infrastructure contracts):**
 
-- `ServiceRepository` — persist and query services.
-- `NodeRepository` — persist and query nodes.
+- `ResourceStore` — generic storage interface for all resources (put, get, list, delete, watch, compare-and-put for optimistic concurrency).
 - `IdentityManager` — SPIRE workload registration.
 - `DNSRecordManager` — CoreDNS record management.
 - `RouteDistributor` — announce / withdraw mesh routes.
 
 #### Application Layer (`internal/application`)
 
-- `ServiceManager` — orchestrates `ServiceRegistrar` use case: validates input → allocates IP → persists service → registers SPIFFE identity → upserts DNS → announces route.
+- `ResourceService` — generic apply/get/list/delete. Parses `apiVersion` + `kind`, routes to kind-specific lifecycle services for validation and side effects.
+- `ServiceLifecycle` — handles Service-specific side effects: validates input → allocates IP → persists service → registers SPIFFE identity → upserts DNS → announces route.
+- `NamespaceLifecycle` — handles Namespace-specific side effects: deletion protection (cannot delete non-empty namespace).
 - `NodeManager` — orchestrates node lifecycle, health tracking.
 
 #### Adapters (`internal/adapter`)
 
 **Inbound:**
 
-- `grpc` — gRPC server for agent and CLI communication.
+- `grpc` — gRPC server with `Apply(resource)` / `Get(...)` / `List(...)` / `Delete(...)` generic RPCs, plus convenience RPCs for agents and CLI.
 - `cli` — `omnimeshctl` command-line tool (separate binary in `cmd/omnimeshctl/`).
 
 **Outbound:**
@@ -347,7 +524,7 @@ Following the project's architectural rules, here is how the components map to t
 - `bgp` — BGP speaker adapter (implements `RouteDistributor`).
 - `grpcpush` — gRPC streaming route push (implements `RouteDistributor`).
 - `nats` — NATS publisher adapter (implements `RouteDistributor`).
-- `persistence` — service/node storage (bolt, SQLite, or PostgreSQL).
+- `etcdstore` — generic `ResourceStore` implementation + state storage.
 
 ---
 
@@ -360,18 +537,19 @@ Following the project's architectural rules, here is how the components map to t
 | **SPIRE dependency** | SPIRE must be deployed alongside the control plane. For environments that cannot run SPIRE, a future adapter could support alternative CAs, but SPIFFE identity format remains the standard. |
 | **Multiple route transports** | Supporting BGP, gRPC, and NATS adds complexity. However, the pluggable port design isolates each adapter. Only the adapters needed for a given deployment are enabled. |
 | **Single control plane** | This RFC does not address HA or multi-control-plane federation. A follow-up RFC should cover leader election and state replication. |
-| **Agent trust** | Agent self-registration requires trusting the agent. Node attestation via SPIRE mitigates this, but a malicious agent could register rogue services. Authorization policies are needed (future RFC). |
+| **Agent trust** | Agent self-registration requires trusting the agent. Node attestation via SPIRE mitigates this, but a malicious agent could register rogue services. Authorization policies are needed (see RFC-0004). |
+| **CRD model complexity** | The declarative resource model adds structural overhead. However, establishing this pattern early avoids painful migrations later and enables GitOps workflows. |
 
 ---
 
 ## Future Work (Subsequent RFCs)
 
-- **RFC-0002**: High availability — control plane replication, leader election, state sync.
-- **RFC-0003**: Traffic policies — routing rules, retries, circuit breaking, load balancing.
-- **RFC-0004**: Authorization policies — service-to-service access control rules.
+- **RFC-0002**: High availability — control plane replication, leader election, state sync, etcd key organization.
+- **RFC-0003**: Traffic policies — routing rules, retries, circuit breaking, rate limiting, load balancing.
+- **RFC-0004**: Authorization policies — service-to-service access control rules (SPIFFE-based).
 - **RFC-0005**: Observability — metrics collection, distributed tracing, access logging.
 - **RFC-0006**: Kubernetes integration — CRD-based configuration, operator, DaemonSet deployment.
-- **RFC-0007**: Waypoint proxies — optional L7 processing nodes for advanced traffic management (header routing, retries, rate limiting) beyond what the ambient agent provides.
+- **RFC-0007**: Waypoint proxies — optional L7 processing nodes for advanced traffic management.
 
 ---
 
@@ -384,3 +562,4 @@ Following the project's architectural rules, here is how the components map to t
 - [NATS Documentation](https://docs.nats.io/)
 - [RFC 6598 — Shared Address Space (100.64.0.0/10)](https://datatracker.ietf.org/doc/html/rfc6598)
 - [Istio Ambient Mesh](https://istio.io/latest/docs/ambient/overview/)
+- [Kubernetes API Conventions](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md)

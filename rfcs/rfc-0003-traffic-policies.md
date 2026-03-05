@@ -242,13 +242,14 @@ The control plane **does not** poll agents for health — agents push health cha
 
 New keys under the `/omnimesh/` prefix:
 
-```
-/omnimesh/
-├── health/{namespace}/{service-name}/{endpoint-addr}    → EndpointHealth JSON
-├── policies/traffic/{namespace}/{policy-name}           → TrafficPolicy JSON
-├── dependencies/{namespace}/{service-name}              → ServiceDependencies JSON
-└── ... (existing keys from RFC-0002)
-```
+Following the key space design from RFC-0002, new keys are added:
+
+- **Resources** (user-defined, under `/omnimesh/resources/`):
+  - `/omnimesh/resources/traffic.omnimesh.io/v1/trafficpolicies/{namespace}/{name}` → TrafficPolicy resource JSON
+
+- **State** (system-derived, under `/omnimesh/state/`):
+  - `/omnimesh/state/health/{namespace}/{service-name}/{endpoint-addr}` → EndpointHealth JSON
+  - `/omnimesh/state/dependencies/{namespace}/{service-name}` → Computed ServiceDependencies JSON
 
 ---
 
@@ -270,6 +271,38 @@ type TrafficPolicy struct {
     CreatedAt       time.Time
     UpdatedAt       time.Time
 }
+```
+
+**YAML Resource Definition** (for `omnimeshctl apply`):
+
+```yaml
+apiVersion: traffic.omnimesh.io/v1
+kind: TrafficPolicy
+metadata:
+  name: order-service-policy
+  namespace: production
+  labels:
+    tier: backend
+spec:
+  targetService: order-service
+  retry:
+    maxRetries: 3
+    retryOn: [connection-failure, 5xx]
+    backoffBase: 100ms
+    backoffMax: 5s
+  circuitBreaker:
+    failureThreshold: 5
+    failureWindow: 30s
+    halfOpenAfter: 15s
+    halfOpenMaxRequests: 1
+    maxConcurrentRequests: 100
+  rateLimiter:
+    requestsPerSecond: 100.0
+    burstSize: 150
+    maxConcurrentRequests: 50
+    limitExceededAction: reject
+  loadBalancer:
+    algorithm: weighted-round-robin
 ```
 
 Each service can have **at most one** TrafficPolicy. If no policy is defined, the agent applies sensible defaults (no retries, no circuit breaking, no rate limiting, weighted round-robin load balancing).
@@ -648,10 +681,10 @@ type ServiceDependencies struct {
 }
 ```
 
-The dependency graph is stored in etcd:
+The dependency graph is stored in the system-derived state area:
 
 ```
-/omnimesh/dependencies/{namespace}/{service-name} → ServiceDependencies JSON
+/omnimesh/state/dependencies/{namespace}/{service-name} → ServiceDependencies JSON
 ```
 
 #### 8.3 Agent Scope Calculation
@@ -864,9 +897,9 @@ type ScopedDistributor interface {
 **Outbound:**
 
 - `etcdstore` — extends the existing etcd adapter with:
-  - Traffic policy storage under `/omnimesh/policies/traffic/`.
-  - Endpoint health storage under `/omnimesh/health/`.
-  - Dependency storage under `/omnimesh/dependencies/`.
+  - Traffic policy storage under `/omnimesh/resources/traffic.omnimesh.io/v1/trafficpolicies/` (via generic `ResourceStore`).
+  - Endpoint health storage under `/omnimesh/state/health/`.
+  - Dependency storage under `/omnimesh/state/dependencies/`.
   - Watch on policy, health, and dependency keys.
 
 ---
@@ -874,57 +907,52 @@ type ScopedDistributor interface {
 ### 10. CLI Extensions
 
 ```bash
-# Register a service with protocol and dependencies
-omnimeshctl service register \
-  --name order-service \
-  --namespace production \
-  --protocol http \
-  --endpoints 10.0.1.5:8080,10.0.1.6:8080 \
-  --depends-on payment-service,inventory-service
+# Declarative — apply a TrafficPolicy resource (preferred for production/GitOps)
+omnimeshctl apply -f traffic-policy.yaml
 
-# Create a traffic policy (with rate limiting)
+# Apply from stdin
+omnimeshctl apply -f - <<EOF
+apiVersion: traffic.omnimesh.io/v1
+kind: TrafficPolicy
+metadata:
+  name: my-api-policy
+  namespace: production
+spec:
+  targetService: my-api
+  retry:
+    maxRetries: 3
+    retryOn: [connection-failure, 5xx]
+    backoffBase: 100ms
+    backoffMax: 5s
+  circuitBreaker:
+    failureThreshold: 5
+    failureWindow: 30s
+    halfOpenAfter: 15s
+  rateLimiter:
+    requestsPerSecond: 100
+    burstSize: 150
+    maxConcurrentRequests: 50
+    limitExceededAction: reject
+  loadBalancer:
+    algorithm: weighted-round-robin
+EOF
+
+# Imperative convenience wrappers (construct a resource internally, call apply)
 omnimeshctl policy create \
   --name my-api-policy \
   --namespace production \
   --target-service my-api \
   --retry-max 3 \
   --retry-on connection-failure,5xx \
-  --retry-backoff-base 100ms \
-  --retry-backoff-max 5s \
   --cb-failure-threshold 5 \
-  --cb-failure-window 30s \
-  --cb-half-open-after 15s \
   --rl-requests-per-second 100 \
-  --rl-burst-size 150 \
-  --rl-max-concurrent 50 \
-  --rl-exceeded-action reject \
   --lb-algorithm weighted-round-robin
 
-# Update a traffic policy
-omnimeshctl policy update \
-  --name my-api-policy \
-  --namespace production \
-  --retry-max 5
-
 # Get / delete / list policies
-omnimeshctl policy get --name my-api-policy --namespace production
-omnimeshctl policy delete --name my-api-policy --namespace production
-omnimeshctl policy list --namespace production
-
-# Manage dependencies
-omnimeshctl service set-dependencies \
-  --name order-service \
-  --namespace production \
-  --depends-on payment-service,inventory-service,notification-service
-
-omnimeshctl service get-dependencies --name order-service --namespace production
-
-# Set endpoint weight
-omnimeshctl service set-weight \
-  --name my-api \
-  --namespace production \
-  --endpoint 10.0.1.5:8080 \
-  --weight 200
+omnimeshctl get trafficpolicy my-api-policy -n production
+omnimeshctl get trafficpolicy my-api-policy -n production -o yaml
+omnimeshctl delete trafficpolicy my-api-policy -n production
+omnimeshctl get trafficpolicies -n production
 
 # View service health
 omnimeshctl service health --name my-api --namespace production

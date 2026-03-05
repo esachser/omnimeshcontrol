@@ -188,38 +188,78 @@ etcd powers every Kubernetes cluster. It has been through more production hours,
 
 ### 2. etcd Key Space Design
 
-All Omnimesh state lives under the `/omnimesh/` prefix. CoreDNS records use the `/skydns/` prefix (CoreDNS etcd plugin convention).
+The key space is split into two top-level areas following the declarative resource model from RFC-0001: **resources** (user-defined, declarative) and **state** (system-derived, computed). CoreDNS records use the `/skydns/` prefix (CoreDNS etcd plugin convention).
 
 ```
 /omnimesh/
-├── services/{namespace}/{name}          → Service JSON
-├── allocations/by-service/{ns}/{name}   → IP address string
-├── allocations/by-ip/{ip}               → ServiceID JSON (reverse index)
-├── nodes/{node-id}                      → Node JSON (with lease)
-├── routes/{namespace}/{name}            → MeshRoute JSON
-└── config/
-    ├── mesh-cidr                        → "100.64.0.0/10"
-    └── dns-zone                         → "omnimesh.local"
-
-/skydns/
-└── local/omnimesh/{service-name}        → {"host": "100.64.x.x"}
-                                            (CoreDNS etcd plugin format)
+│
+├── resources/                                         ← User-defined declarative resources
+│   │
+│   ├── core.omnimesh.io/v1/
+│   │   ├── namespaces/
+│   │   │   ├── production                             → Namespace resource JSON
+│   │   │   ├── staging                                → Namespace resource JSON
+│   │   │   └── monitoring                             → Namespace resource JSON
+│   │   │
+│   │   ├── services/
+│   │   │   ├── production/
+│   │   │   │   ├── order-service                      → Service resource JSON
+│   │   │   │   └── payment-service                    → Service resource JSON
+│   │   │   └── staging/
+│   │   │       └── order-service                      → Service resource JSON
+│   │   │
+│   │   └── nodes/
+│   │       ├── node-1                                 → Node resource JSON
+│   │       └── node-2                                 → Node resource JSON
+│   │
+│   ├── traffic.omnimesh.io/v1/
+│   │   └── trafficpolicies/
+│   │       └── production/
+│   │           └── order-service-policy               → TrafficPolicy resource JSON
+│   │
+│   └── security.omnimesh.io/v1/
+│       └── authorizationpolicies/
+│           └── production/
+│               └── order-to-payment                   → AuthorizationPolicy resource JSON
+│
+├── state/                                             ← System-derived internal state
+│   ├── allocations/
+│   │   ├── by-service/{namespace}/{name}              → IP address string
+│   │   └── by-ip/{ip}                                 → ServiceID JSON (reverse index)
+│   │
+│   ├── health/{namespace}/{service}/{endpoint}        → EndpointHealth JSON
+│   │
+│   └── dependencies/{namespace}/{service}             → Computed ServiceDependencies JSON
+│
+/skydns/                                               ← CoreDNS integration
+└── local/omnimesh/{service-name}                      → {"host": "100.64.x.x"}
+                                                          (CoreDNS etcd plugin format)
 ```
+
+| Query | Key Prefix | Scan |
+| --- | --- | --- |
+| List all namespaces | `/omnimesh/resources/core.omnimesh.io/v1/namespaces/` | ✅ Single prefix |
+| List all services | `/omnimesh/resources/core.omnimesh.io/v1/services/` | ✅ Single prefix |
+| List services in `production` | `.../services/production/` | ✅ Single prefix |
+| List all traffic policies | `/omnimesh/resources/traffic.omnimesh.io/v1/trafficpolicies/` | ✅ Single prefix |
+| List all resources | `/omnimesh/resources/` | ✅ Single prefix |
+
+Operators write to `resources/`; the system computes `state/`. This separation ensures what the operator controls is clearly distinct from what the system derives.
 
 ### 3. Key Operations Mapping
 
-All operations are initiated by agents/CLI through the **gRPC inbound API**, processed by **application services** (domain logic), and persisted via the **`StateStore` outbound port** to etcd.
+All operations are initiated by agents/CLI through the **gRPC inbound API** (including `Apply`), processed by **application services** (domain logic), and persisted via the **`ResourceStore`** and **`StateStore`** outbound ports to etcd.
 
 | Agent/CLI Action (gRPC) | Application Layer | etcd Implementation (internal) |
 | --- | --- | --- |
-| `RegisterService(req)` | Validates → allocates IP → registers identity | `Txn`: check IP not taken → put service + allocation + DNS (atomic) |
-| `DeregisterService(req)` | Validates → releases IP → deregisters identity | `Txn`: delete service + allocation + DNS (atomic) |
-| `ListServices(req)` | Returns from store | `Get` with prefix `/omnimesh/services/{ns}/` |
-| `RegisterNode(req)` | Validates platform/capabilities → stores node | `Put` node key with 30s `Lease` (internally managed) |
+| `Apply(Service)` | Validates → allocates IP → registers identity | `Txn`: check IP not taken → put resource + allocation + DNS (atomic) |
+| `Delete(Service)` | Validates → releases IP → deregisters identity | `Txn`: delete resource + allocation + DNS (atomic) |
+| `List(Service)` | Returns from store | `Get` with prefix `.../services/{ns}/` |
+| `Apply(Node)` | Validates platform/capabilities → stores node | `Put` node resource with 30s `Lease` (internally managed) |
 | `Heartbeat(req)` | Renews node liveness | `KeepAlive` on lease (agent never sees the lease) |
 | *(agent disconnects)* | Watch detects → marks services unhealthy | Lease expires → key deleted → Watch fires |
-| *(service registered)* | DNS adapter writes record | Write `/skydns/` key → CoreDNS reads directly |
-| *(route changes)* | Route distributor pushes to agents | Watch on `/omnimesh/routes/` → push via adapters |
+| *(service applied)* | DNS adapter writes record | Write `/skydns/` key → CoreDNS reads directly |
+| *(route changes)* | Route distributor pushes to agents | Watch on `.../services/` → push via adapters |
 
 ### 4. Hexagonal Architecture Mapping
 
@@ -229,34 +269,33 @@ All operations are initiated by agents/CLI through the **gRPC inbound API**, pro
 > - **Testability** — application logic can be tested with a mock `StateStore`, without etcd.
 > - **Substitutability** — etcd can be replaced by a different backend without changing agents, CLI, or domain logic.
 
-#### Outbound Port (`internal/port/outbound/`)
+#### Outbound Ports (`internal/port/outbound/`)
 
 ```go
-// StateStore defines the replicated state store contract.
-// All operations go through the embedded etcd cluster.
-type StateStore interface {
-    // Service operations
-    PutService(ctx context.Context, svc *domain.Service) error
-    GetService(ctx context.Context, id domain.ServiceID) (*domain.Service, error)
-    ListServices(ctx context.Context, namespace string) ([]*domain.Service, error)
-    DeleteService(ctx context.Context, id domain.ServiceID) error
+// ResourceStore is the generic storage interface for all declarative resources.
+// Maps to /omnimesh/resources/ keys in etcd.
+type ResourceStore interface {
+    Put(ctx context.Context, key string, resource *domain.Resource) (revision int64, err error)
+    Get(ctx context.Context, key string) (*domain.Resource, error)
+    List(ctx context.Context, prefix string) ([]*domain.Resource, error)
+    Delete(ctx context.Context, key string) error
+    Watch(ctx context.Context, prefix string) (<-chan ResourceEvent, error)
 
+    // CompareAndPut for optimistic concurrency
+    CompareAndPut(ctx context.Context, key string, expectedRev int64, resource *domain.Resource) (int64, error)
+}
+
+// StateStore handles system-derived state and etcd-specific operations.
+// Maps to /omnimesh/state/ keys in etcd.
+type StateStore interface {
     // IP allocation (atomic: check + assign via etcd Txn)
     AllocateIP(ctx context.Context, id domain.ServiceID, cidr netip.Prefix) (netip.Addr, error)
     ReleaseIP(ctx context.Context, id domain.ServiceID) error
     GetIPAllocation(ctx context.Context, id domain.ServiceID) (netip.Addr, error)
 
-    // Node operations (with lease-based liveness)
-    RegisterNode(ctx context.Context, node *domain.Node, ttl time.Duration) (LeaseID, error)
-    RenewNode(ctx context.Context, leaseID LeaseID) error
-    GetNode(ctx context.Context, nodeID string) (*domain.Node, error)
-    ListNodes(ctx context.Context) ([]*domain.Node, error)
-    DeleteNode(ctx context.Context, nodeID string) error
-
-    // Watch for state changes
-    WatchServices(ctx context.Context) (<-chan ServiceEvent, error)
-    WatchAllocations(ctx context.Context) (<-chan AllocationEvent, error)
-    WatchNodes(ctx context.Context) (<-chan NodeEvent, error)
+    // Node lease management
+    GrantNodeLease(ctx context.Context, nodeID string, ttl time.Duration) (LeaseID, error)
+    RenewNodeLease(ctx context.Context, leaseID LeaseID) error
 
     // Leadership
     IsLeader() bool
@@ -302,7 +341,8 @@ Alternative adapters (e.g., cloud DNS APIs, PowerDNS, RFC 2136 dynamic updates) 
 | File | Purpose |
 | --- | --- |
 | `embed.go` | Embedded etcd server setup, bootstrap, peer configuration |
-| `store.go` | `EtcdStateStore` implementing the `StateStore` outbound port |
+| `resource_store.go` | `EtcdResourceStore` implementing the generic `ResourceStore` outbound port |
+| `state_store.go` | `EtcdStateStore` implementing the `StateStore` outbound port (IP allocations, leases, leadership) |
 | `txn.go` | Transaction helpers for atomic IP allocation and service registration |
 | `watch.go` | Watch wrappers that convert etcd watch events to domain events |
 | `lease.go` | Lease management for node liveness |

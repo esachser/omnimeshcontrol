@@ -77,6 +77,44 @@ const (
 )
 ```
 
+**YAML Resource Definition** (for `omnimeshctl apply`):
+
+```yaml
+apiVersion: security.omnimesh.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: order-to-payment
+  namespace: production
+spec:
+  action: allow
+  from:
+    - spiffeID: "spiffe://omnimesh.corp/ns/production/sa/order-service"
+  to:
+    - service: payment-service
+      ports: [8080]
+  rules:
+    - http:
+        methods: [POST]
+        pathPrefixes: ["/api/v1/charge", "/api/v1/refund"]
+```
+
+```yaml
+# Temporal policy with expiration
+apiVersion: security.omnimesh.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: temp-debug-access
+  namespace: production
+spec:
+  action: allow
+  from:
+    - spiffeID: "spiffe://omnimesh.corp/ns/production/sa/debug-tool"
+  to:
+    - service: user-service
+  validFrom: "2026-03-04T16:00:00Z"
+  validUntil: "2026-03-04T18:00:00Z"
+```
+
 #### 2.2 Source Identity — `AuthzPeer`
 
 Specifies who is allowed (or denied) to initiate communication:
@@ -388,30 +426,21 @@ This prevents a compromised service from accessing more of the target than inten
 
 #### 6.3 Namespace Isolation
 
-Namespace isolation provides a convenient way to group authorization rules:
+Namespace isolation is configured directly on the `Namespace` resource (RFC-0001):
 
-```go
-type NamespacePolicy struct {
-    Namespace    string
-    Isolation    NamespaceIsolation
-}
-
-type NamespaceIsolation int
-
-const (
-    // NamespaceOpen allows any service to communicate within the namespace
-    // (still requires explicit ALLOW for cross-namespace).
-    NamespaceOpen NamespaceIsolation = iota
-
-    // NamespaceStrict requires explicit ALLOW policies even within the namespace.
-    // This is the default and recommended mode.
-    NamespaceStrict
-)
+```yaml
+apiVersion: core.omnimesh.io/v1
+kind: Namespace
+metadata:
+  name: production
+spec:
+  isolation: strict    # "strict" (default) or "open"
 ```
 
-By default, namespaces use **strict isolation** — services within the same namespace cannot communicate without an explicit ALLOW policy. This prevents lateral movement within a namespace if a service is compromised.
-
-Administrators can opt into `NamespaceOpen` for development/staging namespaces where strict policies would slow down iteration.
+| Mode | Behavior |
+| --- | --- |
+| **strict** (default) | Services within the same namespace cannot communicate without an explicit ALLOW policy. Prevents lateral movement if a service is compromised. |
+| **open** | Services within the namespace can communicate freely. Cross-namespace still requires explicit ALLOW. Useful for dev/staging. |
 
 #### 6.4 Temporal Restrictions
 
@@ -506,19 +535,19 @@ For **L7 policies** (HTTP/gRPC), the L7 attributes are evaluated as an additiona
 
 ---
 
-### 8. etcd Key Space Extension
+### 8. Key Space
 
-New keys under the `/omnimesh/` prefix:
+Following the key space design from RFC-0002, authorization resources are stored under:
 
-```
-/omnimesh/
-├── authz/policies/{namespace}/{policy-name}       → AuthorizationPolicy JSON
-├── authz/namespace/{namespace}                    → NamespacePolicy JSON
-├── dependencies/{namespace}/{service-name}         → ServiceDependencies JSON (updated from RFC-0003)
-└── ... (existing keys from RFC-0001/0002/0003)
-```
+- **Resources** (user-defined, under `/omnimesh/resources/`):
+  - `/omnimesh/resources/security.omnimesh.io/v1/authorizationpolicies/{namespace}/{name}` → AuthorizationPolicy resource JSON
 
-Authorization policies are watched by the application layer. On any change:
+- **State** (system-derived, under `/omnimesh/state/`):
+  - `/omnimesh/state/dependencies/{namespace}/{service-name}` → Computed ServiceDependencies JSON (updated by authz policy changes)
+
+Namespace isolation is stored as part of the `Namespace` resource itself at `/omnimesh/resources/core.omnimesh.io/v1/namespaces/{name}`.
+
+Authorization policy resources are watched by the application layer. On any change:
 1. Policy is validated and persisted.
 2. Dependency graph is recalculated.
 3. Affected agents receive updated policies and routes via scoped distribution.
@@ -613,16 +642,38 @@ type DependencyStore interface {
 **Outbound:**
 
 - `etcdstore` — extends the existing etcd adapter with:
-  - Authorization policy storage under `/omnimesh/authz/policies/`.
-  - Namespace policy storage under `/omnimesh/authz/namespace/`.
-  - Watch on authz keys.
+  - Authorization policy storage under `/omnimesh/resources/security.omnimesh.io/v1/authorizationpolicies/` (via generic `ResourceStore`).
+  - Watch on authorization policy keys.
+  - Updates to dependency state under `/omnimesh/state/dependencies/`.
 
 ---
 
 ### 10. CLI Extensions
 
 ```bash
-# Create an ALLOW policy (L4 — identity-based)
+# Declarative — apply an AuthorizationPolicy resource (preferred for production/GitOps)
+omnimeshctl apply -f authz-policy.yaml
+
+# Apply from stdin
+omnimeshctl apply -f - <<EOF
+apiVersion: security.omnimesh.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: order-to-payment
+  namespace: production
+spec:
+  action: allow
+  from:
+    - spiffeID: "spiffe://omnimesh.corp/ns/production/sa/order-service"
+  to:
+    - service: payment-service
+  rules:
+    - http:
+        methods: [POST]
+        pathPrefixes: ["/api/v1/charge", "/api/v1/refund"]
+EOF
+
+# Imperative convenience wrappers
 omnimeshctl authz create \
   --name order-to-payment \
   --namespace production \
@@ -630,27 +681,7 @@ omnimeshctl authz create \
   --from-service order-service \
   --to-service payment-service
 
-# Create an ALLOW policy with L7 restrictions (HTTP)
-omnimeshctl authz create \
-  --name order-to-payment-charge \
-  --namespace production \
-  --action allow \
-  --from-service order-service \
-  --to-service payment-service \
-  --http-methods POST \
-  --http-paths "/api/v1/charge,/api/v1/refund"
-
-# Create a namespace-wide ALLOW (monitoring can read health from production)
-omnimeshctl authz create \
-  --name monitoring-health \
-  --namespace production \
-  --action allow \
-  --from-namespace monitoring \
-  --to-namespace production \
-  --http-methods GET \
-  --http-paths "/healthz,/readyz,/metrics"
-
-# Create a DENY policy (emergency block)
+# Emergency DENY (blocks immediately)
 omnimeshctl authz create \
   --name block-compromised \
   --namespace production \
@@ -658,7 +689,7 @@ omnimeshctl authz create \
   --from-service compromised-frontend \
   --to-all
 
-# Create a temporal policy (2 hours of debug access)
+# Temporal policy (2 hours of debug access)
 omnimeshctl authz create \
   --name temp-debug-access \
   --namespace production \
@@ -667,31 +698,21 @@ omnimeshctl authz create \
   --to-service user-service \
   --valid-for 2h
 
-# Create a dry-run policy (audit mode)
-omnimeshctl authz create \
-  --name audit-new-policy \
-  --namespace production \
-  --action dry-run \
-  --from-service new-service \
-  --to-service legacy-api
+# Namespace isolation (set via Namespace resource)
+omnimeshctl apply -f - <<EOF
+apiVersion: core.omnimesh.io/v1
+kind: Namespace
+metadata:
+  name: staging
+spec:
+  isolation: open
+EOF
 
-# Set namespace isolation mode
-omnimeshctl namespace set-isolation \
-  --namespace staging \
-  --mode open
-
-omnimeshctl namespace set-isolation \
-  --namespace production \
-  --mode strict
-
-# List policies
-omnimeshctl authz list --namespace production
-
-# Get policy details
-omnimeshctl authz get --name order-to-payment --namespace production
-
-# Delete policy
-omnimeshctl authz delete --name temp-debug-access --namespace production
+# Get / delete / list
+omnimeshctl get authorizationpolicy order-to-payment -n production
+omnimeshctl get authorizationpolicy order-to-payment -n production -o yaml
+omnimeshctl get authorizationpolicies -n production
+omnimeshctl delete authorizationpolicy temp-debug-access -n production
 
 # View what a service is allowed to call (derived from policies)
 omnimeshctl authz show-access --service order-service --namespace production

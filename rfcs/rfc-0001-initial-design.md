@@ -208,6 +208,49 @@ The agent handles:
 - **Service discovery** — reporting locally running services to the control plane.
 - **Health checking** — monitoring local service health and reporting status.
 
+### 3.1 HBONE — HTTP/2 Tunnel Transport
+
+All agent-to-agent service traffic is tunneled through **HBONE** (HTTP-Based Overlay Network Encapsulation) — **HTTP/2 CONNECT** tunnels with mTLS. This applies to **all service protocols**, including raw TCP.
+
+```
+Service A (TCP)       Agent (node-1)                         Agent (node-2)         Service B (TCP)
+     │                      │                                      │                      │
+     │  raw TCP ───────────►│                                      │                      │
+     │                      │                                      │                      │
+     │                      │  HTTP/2 CONNECT tunnel               │                      │
+     │                      │  (mTLS + traceparent + metadata)     │                      │
+     │                      │─────────────────────────────────────►│                      │
+     │                      │                                      │                      │
+     │                      │  TCP payload tunneled inside HTTP/2  │  raw TCP ───────────►│
+     │                      │◄─────────────────────────────────────│◄──────────────────────│
+```
+
+This design is inspired by Istio ztunnel's HBONE implementation and has critical advantages:
+
+1. **Universal trace propagation** — since agent-to-agent communication is always HTTP/2, trace context (`traceparent` / `tracestate`) can be injected as HTTP/2 headers on the CONNECT request, **even when the inner payload is raw TCP**. This eliminates the TCP tracing blind spot entirely.
+2. **Metadata transport** — source SPIFFE ID, destination service, authorization context, and other mesh metadata are carried as HTTP/2 headers on the tunnel, independent of the application protocol.
+3. **Multiplexed connections** — HTTP/2 multiplexing allows multiple logical streams (service connections) over a single TCP connection between two agents, reducing connection overhead.
+4. **Unified encryption** — mTLS is established once at the HTTP/2 layer. The inner TCP payload does not need its own TLS (the tunnel provides encryption).
+5. **Firewall friendliness** — all inter-agent traffic uses a single port (HTTPS), simplifying firewall rules.
+
+#### HBONE Headers
+
+The HTTP/2 CONNECT request carries mesh metadata:
+
+| Header | Description | Example |
+| --- | --- | --- |
+| `:authority` | Destination service mesh address | `100.64.0.5:8080` |
+| `x-omnimesh-source-identity` | Source SPIFFE ID (from mTLS client cert) | `spiffe://omnimesh.corp/ns/production/sa/order-service` |
+| `x-omnimesh-destination-service` | Target service identifier | `production/payment-service` |
+| `traceparent` | W3C Trace Context | `00-abc123...-def456...-01` |
+| `tracestate` | W3C Trace State (optional) | `omnimesh=...` |
+
+Because the tunnel carries these headers for _all_ protocols, the destination agent can:
+- Perform **authorization** (verify source identity from mTLS + headers).
+- Record **per-request metrics** (source, destination, bytes, duration) even for TCP.
+- Create **trace spans** linked to the caller's trace, regardless of inner protocol.
+- Apply **rate limiting** and **circuit breaking** with full source/destination context.
+
 Platform-specific behavior lives exclusively in agent-side adapters. The control plane itself is OS-agnostic — it deals only with abstract service, identity, and routing concepts.
 
 ### 4. Identity & Security — SPIFFE / SPIRE

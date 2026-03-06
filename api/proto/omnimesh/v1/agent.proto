@@ -1,0 +1,140 @@
+syntax = "proto3";
+
+package omnimesh.v1;
+
+option go_package = "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1;omnimeshv1";
+
+// --- Agent Stream Service ---
+// Bidirectional stream between agents and the control plane.
+// Agent liveness is implicit from stream health (no heartbeat RPC).
+
+service AgentService {
+  // AgentStream is the persistent bidirectional stream.
+  // Agent sends: registration, health reports, drain requests.
+  // Control plane sends: scope snapshots, scope updates, route updates.
+  rpc AgentStream(stream AgentMessage) returns (stream ControlMessage);
+}
+
+// --- Agent → Control Plane Messages ---
+
+message AgentMessage {
+  oneof payload {
+    RegisterNodeRequest register_node = 1;
+    HealthReport health_report = 2;
+    DrainRequest drain_request = 3;
+  }
+}
+
+message RegisterNodeRequest {
+  string node_id = 1;
+  string platform = 2;       // "linux", "windows", "darwin"
+  string addr = 3;           // "host:port" for HBONE tunneling
+  map<string, string> labels = 4;
+  repeated string services = 5;  // ServiceIDs in "namespace/name" format
+}
+
+message HealthReport {
+  string service_namespace = 1;
+  string service_name = 2;
+  string endpoint_address = 3;
+  EndpointHealthStatus status = 4;
+  string probe_type = 5;  // "TCP", "HTTP", "gRPC"
+}
+
+message DrainRequest {
+  string service_namespace = 1;
+  string service_name = 2;
+  string endpoint_address = 3;
+}
+
+enum EndpointHealthStatus {
+  ENDPOINT_HEALTH_STATUS_UNKNOWN = 0;
+  ENDPOINT_HEALTH_STATUS_HEALTHY = 1;
+  ENDPOINT_HEALTH_STATUS_UNHEALTHY = 2;
+  ENDPOINT_HEALTH_STATUS_DRAINING = 3;
+}
+
+// --- Control Plane → Agent Messages ---
+
+message ControlMessage {
+  oneof payload {
+    ScopeSnapshot scope_snapshot = 1;
+    ScopeUpdate scope_update = 2;
+    RouteUpdate route_update = 3;
+  }
+}
+
+message ScopeSnapshot {
+  repeated ServiceInfo services = 1;
+  repeated RouteInfo routes = 2;
+  repeated TrafficPolicyInfo traffic_policies = 3;
+  repeated AuthzPolicyInfo authz_policies = 4;
+}
+
+message ScopeUpdate {
+  ScopeUpdateType type = 1;
+  repeated ServiceInfo services = 2;
+  repeated RouteInfo routes = 3;
+  repeated TrafficPolicyInfo traffic_policies = 4;
+}
+
+enum ScopeUpdateType {
+  SCOPE_UPDATE_TYPE_ADD = 0;
+  SCOPE_UPDATE_TYPE_MODIFY = 1;
+  SCOPE_UPDATE_TYPE_REMOVE = 2;
+}
+
+message RouteUpdate {
+  repeated RouteInfo routes = 1;
+}
+
+// --- Shared Info Messages ---
+
+message ServiceInfo {
+  string namespace = 1;
+  string name = 2;
+  string protocol = 3;
+  string mesh_addr = 4;
+  int32 port = 5;
+  repeated EndpointInfo endpoints = 6;
+}
+
+message EndpointInfo {
+  string address = 1;
+  int32 weight = 2;
+  EndpointHealthStatus health = 3;
+}
+
+message RouteInfo {
+  string service_namespace = 1;
+  string service_name = 2;
+  string mesh_addr = 3;
+  repeated NodeEndpointInfo target_nodes = 4;
+}
+
+message NodeEndpointInfo {
+  string node_id = 1;
+  string addr = 2;
+}
+
+message TrafficPolicyInfo {
+  string name = 1;
+  string namespace = 2;
+  string target_service_namespace = 3;
+  string target_service_name = 4;
+  bytes spec = 5;  // JSON-encoded policy spec
+}
+
+message AuthzPolicyInfo {
+  string name = 1;
+  string namespace = 2;
+  string action = 3;
+  SelectorInfo source = 4;
+  SelectorInfo destination = 5;
+}
+
+message SelectorInfo {
+  string namespace = 1;
+  string name = 2;
+  map<string, string> labels = 3;
+}

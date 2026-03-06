@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package omnimesh.v1;
+
+option go_package = "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1;omnimeshv1";
+
+// --- Resource Messages ---
+
+message ResourceMetadata {
+  string name = 1;
+  string namespace = 2;
+  map<string, string> labels = 3;
+  int64 revision = 4;
+}
+
+message Resource {
+  string api_version = 1;
+  string kind = 2;
+  ResourceMetadata metadata = 3;
+  bytes spec = 4;  // JSON-encoded spec
+}
+
+// --- Control Plane Service (CLI & Admin) ---
+
+service ControlPlaneService {
+  rpc ApplyResource(ApplyResourceRequest) returns (ApplyResourceResponse);
+  rpc GetResource(GetResourceRequest) returns (GetResourceResponse);
+  rpc ListResources(ListResourcesRequest) returns (ListResourcesResponse);
+  rpc DeleteResource(DeleteResourceRequest) returns (DeleteResourceResponse);
+}
+
+message ApplyResourceRequest {
+  Resource resource = 1;
+}
+
+message ApplyResourceResponse {
+  Resource resource = 1;
+}
+
+message GetResourceRequest {
+  string kind = 1;
+  string namespace = 2;
+  string name = 3;
+}
+
+message GetResourceResponse {
+  Resource resource = 1;
+}
+
+message ListResourcesRequest {
+  string kind = 1;
+  string namespace = 2;
+  map<string, string> label_selector = 3;
+}
+
+message ListResourcesResponse {
+  repeated Resource resources = 1;
+}
+
+message DeleteResourceRequest {
+  string kind = 1;
+  string namespace = 2;
+  string name = 3;
+  bool force = 4;
+}
+
+message DeleteResourceResponse {}

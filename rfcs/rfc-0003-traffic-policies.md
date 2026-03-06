@@ -111,13 +111,14 @@ Health detection operates at two levels: **agent-level** (is the agent itself al
 
 #### 2.1 Agent Liveness
 
-Agent liveness is already covered by RFC-0002's etcd lease mechanism:
+Agent liveness is handled by RFC-0002's persistent gRPC stream mechanism:
 
-- Agent calls `RegisterNode` → control plane creates a 30s etcd lease.
-- Agent calls `Heartbeat` periodically → control plane renews the lease.
-- If the agent stops heartbeating, the lease expires → control plane marks all services on that node as unhealthy and withdraws their routes.
+- The agent maintains a **persistent bidirectional gRPC stream** with the control plane (the same stream used for scoped distribution).
+- Liveness is determined by the health of this gRPC stream — no periodic heartbeat RPCs are needed.
+- If the stream disconnects, the control plane starts a configurable **grace period** (e.g., 30s). If the agent does not reconnect within the grace period, the control plane marks all services on that node as unhealthy and withdraws their routes.
+- This approach avoids writing to etcd on every heartbeat interval, which would degrade performance at scale.
 
-**No changes needed** for agent-level liveness.
+**No changes needed** for agent-level liveness — it is fully covered by RFC-0002.
 
 #### 2.2 Service Health Detection (Agent-Side)
 
@@ -206,7 +207,7 @@ Each service endpoint on an agent has a health state:
 
 #### 2.3 Agent → Control Plane Health Reporting
 
-When an agent detects a health state change for a local service, it **actively reports** it to the control plane via gRPC:
+When an agent detects a health state change for a local service, it **actively reports** it to the control plane via the persistent gRPC stream:
 
 ```
 Agent                     Control Plane                      etcd
@@ -238,7 +239,60 @@ Agent                     Control Plane                      etcd
 
 The control plane **does not** poll agents for health — agents push health changes proactively. This ensures fast detection and scalability.
 
-#### 2.4 etcd Key Space Extension
+#### 2.4 Graceful Termination (Draining)
+
+The RFCs cannot rely solely on health checks and circuit breakers to detect service shutdowns. When a service instance scales down or restarts, traffic continues to be sent to it until the agents' health checks or circuit breakers detect the failure — causing unnecessary errors.
+
+The agent provides **control-plane-coordinated draining** to withdraw routes *before* the service shuts down:
+
+```
+Orchestrator / OS                 Agent (node-1)              Control Plane            Other Agents
+      │                                │                            │                        │
+      │  SIGTERM / preStop hook         │                            │                        │
+      │───────────────────────────────►│                            │                        │
+      │                                │                            │                        │
+      │                                │ DrainService(serviceID)    │                        │
+      │                                │───────────────────────────►│                        │
+      │                                │                            │ Set endpoint →          │
+      │                                │                            │ DRAINING                │
+      │                                │                            │                        │
+      │                                │                            │ Withdraw endpoint from  │
+      │                                │                            │ all agents' routes      │
+      │                                │                            │──────────(scoped)──────►│
+      │                                │                            │                        │
+      │                                │                            │ No new connections      │
+      │                                │  ok (drain started)        │ to this endpoint        │
+      │                                │◄───────────────────────────│                        │
+      │                                │                            │                        │
+      │                                │  Wait for existing         │                        │
+      │                                │  connections to complete    │                        │
+      │                                │  (up to drain timeout)     │                        │
+      │                                │                            │                        │
+      │  (drain timeout expires or     │                            │                        │
+      │   all connections drained)     │                            │                        │
+      │                                │                            │                        │
+      │  Process exits                 │                            │                        │
+```
+
+How it works:
+
+1. **Signal interception**: The agent intercepts process termination signals (SIGTERM on Linux/macOS, service stop/`WM_CLOSE` on Windows) or integrates with the orchestrator (Kubernetes `preStop` hooks).
+2. **Proactive drain notification**: Upon detecting a termination signal for a local service, the agent sends `DrainService(serviceID)` to the control plane via the persistent gRPC stream **before** the service actually shuts down.
+3. **Route withdrawal**: The control plane transitions the endpoint to a **DRAINING** state. It withdraws the endpoint's route from all agents via scoped distribution, preventing **new** connections to the endpoint.
+4. **Connection draining**: The local agent allows existing in-flight connections/requests to complete up to a configurable **drain timeout** (e.g., 30s). After the timeout, remaining connections are forcefully closed.
+5. **Final cleanup**: Once draining completes, the endpoint is fully removed from the routing tables.
+
+On Kubernetes, the agent uses the pod's `preStop` hook to initiate draining. The `terminationGracePeriodSeconds` should be set to at least `drainTimeout + 5s` to allow the drain to complete before Kubernetes forcefully kills the pod.
+
+```yaml
+# Agent-side configuration
+traffic_policy:
+  graceful_termination:
+    drain_timeout_sec: 30              # Max time to wait for in-flight requests
+    signal_intercept: true             # Intercept SIGTERM for local services
+```
+
+#### 2.5 etcd Key Space Extension
 
 New keys under the `/omnimesh/` prefix:
 
@@ -455,6 +509,72 @@ Circuit breaking (agent-local, per-endpoint, based on traffic failure rates) and
 
 A single agent's circuit breaker protects **that agent's traffic** instantly. Once the agent also reports the health change, the control plane propagates the information cluster-wide.
 
+#### 5.5 Global Outlier Detection
+
+Per-agent circuit breakers have a significant limitation: if a backend endpoint begins to fail, **every single agent** must independently experience `FailureThreshold` failures before tripping its local circuit. For a service with 100 callers, this means 100 × 5 = 500 failed requests before the endpoint is isolated.
+
+**Global Outlier Detection** addresses this by aggregating health signals at the control plane level:
+
+```
+Agent-1  ──── ReportServiceHealth(endpoint-X: 60% error rate) ────►  ┌──────────────────┐
+Agent-2  ──── ReportServiceHealth(endpoint-X: 55% error rate) ────►  │  Control Plane    │
+Agent-3  ──── ReportServiceHealth(endpoint-X: 70% error rate) ────►  │                   │
+                                                                      │  Aggregates        │
+                                                                      │  failure reports    │
+                                                                      │  from all agents   │
+                                                                      │                   │
+                                                                      │  Threshold met:   │
+                                                                      │  Mark endpoint-X  │
+                                                                      │  as DEGRADED      │
+                                                                      └────────┬──────────┘
+                                                                               │
+                                                                               │ Remove endpoint-X from
+                                                                               │ routing tables of ALL agents
+                                                                               │ (via scoped distribution)
+                                                                               ▼
+                                                                      All agents simultaneously
+                                                                      stop sending to endpoint-X
+```
+
+How it works:
+
+1. Agents already report health state changes to the control plane (§2.3). The control plane aggregates partial failure rates from these reports.
+2. When the aggregated error rate for an endpoint exceeds a configurable threshold **and** a minimum number of reporting agents have contributed data, the control plane **actively marks the endpoint as degraded** and removes it from the routing tables of all agents.
+3. The ejected endpoint is re-evaluated after a configurable ejection duration. If the endpoint passes health checks during this period, it is gradually reintroduced.
+
+```go
+type OutlierDetectionPolicy struct {
+    // ErrorRateThreshold is the error rate above which an endpoint is ejected (e.g., 0.5 = 50%).
+    ErrorRateThreshold float64
+
+    // MinReportingAgents is the minimum number of agents that must report data
+    // before an ejection decision is made (avoids premature ejection from a single agent's view).
+    MinReportingAgents int
+
+    // EjectionDuration is how long an endpoint stays ejected before being re-evaluated.
+    EjectionDuration time.Duration
+
+    // MaxEjectionPercent is the maximum percentage of endpoints that can be ejected
+    // simultaneously (safety valve — prevents ejecting all endpoints).
+    MaxEjectionPercent float64
+}
+```
+
+The `TrafficPolicy` model is extended with an optional `OutlierDetection` field:
+
+```go
+type TrafficPolicy struct {
+    // ... existing fields ...
+    OutlierDetection *OutlierDetectionPolicy // nil = no global outlier detection
+}
+```
+
+| Mechanism | Scope | Speed | Effect |
+| --- | --- | --- | --- |
+| **Circuit Breaker** | Per-agent, per-endpoint | Immediate (on failure) | Agent locally stops sending to that endpoint |
+| **Global Outlier Detection** | Cluster-wide (via control plane) | Seconds (aggregation window) | Control plane removes endpoint from all agents' routes simultaneously |
+| **Health Detection** | Cluster-wide (via control plane) | Seconds (probe interval + reporting) | Control plane marks endpoint unhealthy in persistent state |
+
 ---
 
 ### 6. Rate Limiting
@@ -574,6 +694,7 @@ const (
     EndpointHealthUnknown   EndpointHealthStatus = iota
     EndpointHealthHealthy
     EndpointHealthUnhealthy
+    EndpointHealthDraining  // Endpoint is shutting down gracefully; no new connections, existing ones drain
 )
 ```
 
@@ -759,21 +880,25 @@ Agent                              Control Plane
   │◄─────────────────────────────────────│
 ```
 
-#### 8.5 On-Demand Queries
+#### 8.5 Fail-Fast for Unknown Routes
 
-For edge cases where an agent encounters traffic for a service **not in its scope** (e.g., a misconfigured client, or a dependency that wasn't declared), the agent can make an **on-demand query** to the control plane:
+If an agent encounters traffic for a service **not in its scope** (e.g., a misconfigured client, or a dependency that wasn't declared), the agent **immediately drops the connection** (fail-fast). This is consistent with the default-deny posture from RFC-0004:
 
-```go
-// Agent → Control Plane (gRPC unary call, not on the stream)
-ResolveService(ctx context.Context, serviceID ServiceID) (*ServiceRouteInfo, error)
+- If an ALLOW authorization policy exists for the dependency, the route is **already pre-fetched** via scoped distribution (§8.3). The service is in the agent's scope because the authorization policy created the dependency graph entry.
+- If no route is present, there is no ALLOW policy, and the connection should be denied.
+- This ensures the control plane is **never on the critical path of the data plane**. A slow or unavailable control plane does not cause the data plane to drop traffic — only missing policies cause drops.
+
+For migration scenarios where services are being incrementally enrolled in the mesh and dependency declarations may be incomplete, agents can be configured to queue a **background asynchronous request** to the control plane to fetch the missing route. The original connection is **not** held open — the client relies on its own TCP retransmission or application-level retry to handle the delay. If the control plane resolves the route, the agent caches it for future requests.
+
+```yaml
+trafic_policy:
+  agent_distribution:
+    unknown_route_action: "fail-fast"     # Default: immediately drop. Alternative: "async-resolve"
+    async_resolve_rate: 10                # Max background queries per second per agent (if async-resolve)
+    async_resolve_cache_ttl_sec: 60       # Cache TTL for async-resolved routes
 ```
 
-On-demand queries are:
-- **Cacheable** — the agent caches the result for a configurable TTL (e.g., 60s).
-- **Async-updatable** — after the on-demand query, the control plane may add that service to the agent's scope for future updates.
-- **Rate-limited** — to prevent abuse, on-demand queries are rate-limited (e.g., 10 queries/sec per agent).
-
-This ensures the agent can always function even with incomplete dependency declarations, while keeping the steady-state memory footprint minimal.
+> **Note**: The synchronous `ResolveService()` RPC is intentionally not provided. Placing the control plane on the data path's critical path creates a DoS vector (a compromised service could query random IPs, forcing the agent to spam the control plane) and means that if the control plane is unavailable, the data plane drops traffic.
 
 #### 8.6 Memory Impact
 
@@ -829,6 +954,10 @@ type TrafficPolicyManager interface {
 // ServiceHealthReporter defines the inbound use case for agents reporting health.
 type ServiceHealthReporter interface {
     ReportEndpointHealth(ctx context.Context, report *domain.EndpointHealth) error
+    // DrainService initiates graceful termination for a service endpoint.
+    // The control plane withdraws the endpoint from all agents' routes,
+    // preventing new connections while allowing existing ones to complete.
+    DrainService(ctx context.Context, serviceID domain.ServiceID, endpointAddr string) error
 }
 
 // AgentScopeManager defines the inbound use case for managing agent scopes.
@@ -836,8 +965,6 @@ type AgentScopeManager interface {
     // GetAgentScope returns the full set of services, routes, policies, and health
     // data that the given agent needs.
     GetAgentScope(ctx context.Context, nodeID string) (*domain.AgentScope, error)
-    // ResolveService handles on-demand queries from agents for services not in scope.
-    ResolveService(ctx context.Context, serviceID domain.ServiceID) (*domain.ServiceRouteInfo, error)
 }
 ```
 
@@ -890,8 +1017,8 @@ type ScopedDistributor interface {
 
 - `grpc` — extends the existing gRPC server with:
   - `CreateTrafficPolicy` / `UpdateTrafficPolicy` / `DeleteTrafficPolicy` / `ListTrafficPolicies` RPCs.
-  - `ReportServiceHealth` RPC (called by agents).
-  - `ResolveService` RPC (on-demand agent queries).
+  - `ReportServiceHealth` RPC (called by agents, on the persistent stream).
+  - `DrainService` RPC (called by agents during graceful shutdown).
   - Scoped state streaming on the bidirectional agent stream.
 
 **Outbound:**

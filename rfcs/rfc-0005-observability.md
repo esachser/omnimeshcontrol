@@ -217,7 +217,27 @@ These are the most critical metrics — they represent the actual traffic flowin
 | `omnimesh.agent.requests.bytes_sent` | Counter | Total bytes sent (request direction) | `source_service`, `destination_service` |
 | `omnimesh.agent.requests.bytes_received` | Counter | Total bytes received (response direction) | `source_service`, `destination_service` |
 
-> **Cardinality note**: The `source_service` × `destination_service` × `response_code` combination can be high-cardinality. In large meshes, agents can be configured to drop `source_service` from request metrics and only keep it on traces.
+> **Cardinality note**: The `source_service` × `destination_service` × `response_code` combination can be high-cardinality. In large meshes, agents can be configured to disable the combined metric and fall back to the separated ingress/egress metrics below (see Cardinality Management, §10).
+
+##### Separated Aggregate Metrics
+
+To support high-cardinality deployments and provide focused ingress/egress views, the following aggregate metrics are provided alongside the combined metric:
+
+| Metric | Type | Description | Key Attributes |
+| --- | --- | --- | --- |
+| `omnimesh.agent.requests.ingress.total` | Counter | Total requests received by local services (ingress perspective) | `source_service`, `source_namespace`, `protocol`, `response_code` |
+| `omnimesh.agent.requests.egress.total` | Counter | Total requests sent to upstream services (egress perspective) | `destination_service`, `destination_namespace`, `protocol`, `response_code` |
+
+The separated metrics reduce cardinality by recording only one side of the service pair per metric. They are **always emitted** regardless of the combined metric configuration.
+
+The combined metric (`omnimesh.agent.requests.total`) can be disabled via a configuration flag when cardinality pressure is too high:
+
+```yaml
+observability:
+  metrics:
+    combined_request_metric:
+      enabled: true                      # Set to false to disable the combined source×dest metric
+```
 
 #### 5.2 Connection & HBONE Tunnel Metrics
 
@@ -305,10 +325,10 @@ The ambient agent injects and propagates trace context for every proxied request
 
 Since all agent-to-agent traffic uses **HBONE HTTP/2 tunnels** (RFC-0001 §3.1), trace context is **always propagated via HTTP/2 headers on the tunnel**, regardless of the inner service protocol. This means:
 
-- **HTTP/gRPC services**: trace context is propagated both in the HBONE tunnel headers and in the application-level headers (if the application uses OTel SDK).
-- **TCP services**: trace context rides in the HBONE tunnel’s HTTP/2 headers. The agent creates spans with full source/destination context. The inner TCP payload is opaque, but the mesh-level trace is complete.
+- **HTTP/gRPC services**: trace context is propagated both in the HBONE tunnel headers and in the application-level headers (if the application uses OTel SDK). End-to-end distributed tracing works fully.
+- **TCP services**: trace context rides in the HBONE tunnel's HTTP/2 headers. The agent creates spans with full source/destination context for **each mesh hop**. However, the inner TCP payload is opaque — the target application receives no trace context. When an unmodified TCP application makes a subsequent outbound call, the egress agent starts a **new trace** because it has no way to correlate the inbound TCP connection with the outbound one. The distributed trace remains broken across the application.
 
-This eliminates the traditional TCP tracing blind spot found in other service meshes.
+HBONE provides **mesh-level hop tracing** for TCP (every agent-to-agent hop is traced), but **not** end-to-end distributed tracing across unmodified TCP applications. End-to-end tracing for TCP requires L7 protocols or application-level instrumentation (e.g., OpenTelemetry SDK).
 
 ```
 Service A (TCP)    Agent (node-1)                              Agent (node-2)          Service B (TCP)
@@ -558,6 +578,8 @@ High cardinality (too many unique label combinations) can overwhelm metrics back
 ```yaml
 observability:
   metrics:
+    combined_request_metric:
+      enabled: true                          # Set to false in high-cardinality deployments
     cardinality:
       max_label_cardinality: 1000         # Warn if a metric exceeds this unique label count
       drop_labels:
@@ -576,7 +598,7 @@ observability:
 | **Agent memory for per-request metrics** | Each agent maintains counters and histograms for its scoped services. With scoped distribution (~20 services per agent), this is manageable. Label cardinality controls mitigate explosion. |
 | **Trace overhead** | Even with sampling, the agent must check trace context on every request. The check is fast (ns-level), and 1% default sampling minimizes export overhead. |
 | **OpenTelemetry SDK dependency** | Adds the OTel Go SDK as a dependency. This is a well-maintained, vendor-neutral library with minimal transitive dependencies. |
-| **TCP tracing is tunnel-level only** | TCP service traces capture mesh-level spans (egress/ingress) with full metadata via HBONE headers, but cannot inject trace context into the TCP payload itself. For end-to-end in-app tracing, TCP services should use the OTel SDK directly. The mesh-level trace is still complete. |
+| **TCP tracing is hop-level only** | TCP service traces capture mesh-level spans (egress/ingress) with full metadata via HBONE headers, but cannot inject trace context into the TCP payload itself. When an unmodified TCP application makes a subsequent outbound call, the egress agent starts a new trace — the distributed trace is broken across the application. End-to-end tracing for TCP requires L7 protocols or application-level instrumentation (e.g., OpenTelemetry SDK). |
 | **Multiple export formats** | Supporting both Prometheus pull and OTLP push adds configuration complexity. Mitigated by sensible defaults (Prometheus only) and clear documentation. |
 | **Error-biased sampling** | Always-sampling errors can cause trace storage spikes during outages. Mitigated by configurable rate caps on error sampling. |
 

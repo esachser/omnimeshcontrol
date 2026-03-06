@@ -77,45 +77,58 @@ resp, err := txn.Commit()
 
 Neither NATS JetStream (no multi-key transactions) nor a custom Raft FSM (must be hand-coded and thoroughly tested) provide this safety as directly.
 
-#### 4. Leases for Node Liveness
+#### 4. Node Liveness via Persistent gRPC Stream
 
-etcd leases provide a natural mechanism for node heartbeat and automatic disconnect detection. **Importantly, agents never interact with etcd directly** — the control plane's application layer manages etcd leases internally, triggered by agent gRPC calls:
+Agent liveness is determined by the state of the **persistent bidirectional gRPC stream** between the agent and the control plane (the same stream used for scoped distribution in RFC-0003). This avoids using etcd leases for heartbeats, which would require thousands of consensus-requiring `KeepAlive` writes per second at scale and severely degrade etcd performance.
+
+The control plane tracks connected agents **in-memory**, not in etcd. etcd is only written to when a node registers, gracefully shuts down, or is marked as permanently lost after a timeout.
 
 ```
-Agent (gRPC)              Application Service          EtcdStateStore
-    │                            │                            │
-    │  RegisterNode(req)         │                            │
-    │───────────────────────────►│                            │
-    │                            │ domain validation          │
-    │                            │ RegisterNode(node, 30s)    │
-    │                            │───────────────────────────►│
-    │                            │   Grant lease (30s)        │
-    │                            │   Put node key with lease  │
-    │                            │ leaseID                    │
-    │                            │◄───────────────────────────│
-    │  ok (internalized leaseID) │                            │
-    │◄───────────────────────────│                            │
-    │                            │                            │
-    │  Heartbeat() (periodic)    │                            │
-    │───────────────────────────►│                            │
-    │                            │ RenewNode(leaseID)         │
-    │                            │───────────────────────────►│
-    │                            │   KeepAlive on lease       │
-    │                            │◄───────────────────────────│
-    │  ok                        │                            │
-    │◄───────────────────────────│                            │
-    │                            │                            │
-    ╳  Agent disconnects         │                            │
-                                 │         (30s passes)       │
-                                 │   Lease expires            │
-                                 │   → node key deleted       │
-                                 │   → Watch fires            │
-                                 │◄───────────────────────────│
-                                 │ mark node's services       │
-                                 │ as unhealthy               │
+Agent (gRPC stream)       Application Service          In-Memory Tracker   EtcdStateStore
+    │                            │                            │                  │
+    │  Open bidirectional stream  │                            │                  │
+    │  + RegisterNode(req)       │                            │                  │
+    │───────────────────────────►│                            │                  │
+    │                            │ domain validation          │                  │
+    │                            │ TrackNode(node)            │                  │
+    │                            │───────────────────────────►│                  │
+    │                            │   (in-memory: node=alive)  │                  │
+    │                            │                            │                  │
+    │                            │ PersistNode(node)          │                  │
+    │                            │────────────────────────────┼─────────────────►│
+    │                            │   Put node key             │                  │
+    │  ok + scoped state stream  │   (no lease, persistent)   │                  │
+    │◄───────────────────────────│                            │                  │
+    │                            │                            │                  │
+    │  (stream stays open —      │                            │                  │
+    │   liveness is implicit)    │                            │                  │
+    │                            │                            │                  │
+    ╳  Stream disconnects        │                            │                  │
+                                 │  OnStreamDisconnect(node)  │                  │
+                                 │───────────────────────────►│                  │
+                                 │   Start grace period timer │                  │
+                                 │   (configurable, e.g. 30s) │                  │
+                                 │                            │                  │
+                                 │         (30s passes,       │                  │
+                                 │          no reconnect)     │                  │
+                                 │                            │                  │
+                                 │  MarkNodeLost(node)        │                  │
+                                 │────────────────────────────┼─────────────────►│
+                                 │                            │  Update node     │
+                                 │                            │  status in etcd  │
+                                 │                            │  → Watch fires   │
+                                 │◄────────────────────────────────────────────── │
+                                 │ mark node's services       │                  │
+                                 │ as unhealthy, withdraw     │                  │
+                                 │ routes                     │                  │
 ```
 
-The agent only knows about its gRPC contract (`RegisterNode`, `Heartbeat`). The fact that leases exist in etcd is an implementation detail hidden behind the `StateStore` outbound port.
+Key properties:
+
+- **No periodic heartbeat RPC** — liveness is determined by gRPC stream health (TCP keepalives, HTTP/2 pings). No agent-initiated heartbeat messages are needed.
+- **No etcd writes for liveness** — etcd is only written on node registration, graceful shutdown (`DeregisterNode`), or permanent loss (`MarkNodeLost`). This eliminates the O(N) per-interval write pressure on etcd.
+- **Grace period on disconnect** — when a stream disconnects (transient network issue, agent restart), the control plane waits a configurable grace period before declaring the node lost. If the agent reconnects within the grace period, it resumes seamlessly.
+- **Graceful shutdown** — when an agent shuts down cleanly, it sends a `DeregisterNode` message on the stream before closing. The control plane immediately marks services as draining/unhealthy without waiting for the grace period.
 
 #### 5. Battle-Tested
 
@@ -255,9 +268,11 @@ All operations are initiated by agents/CLI through the **gRPC inbound API** (inc
 | `Apply(Service)` | Validates → allocates IP → registers identity | `Txn`: check IP not taken → put resource + allocation + DNS (atomic) |
 | `Delete(Service)` | Validates → releases IP → deregisters identity | `Txn`: delete resource + allocation + DNS (atomic) |
 | `List(Service)` | Returns from store | `Get` with prefix `.../services/{ns}/` |
-| `Apply(Node)` | Validates platform/capabilities → stores node | `Put` node resource with 30s `Lease` (internally managed) |
-| `Heartbeat(req)` | Renews node liveness | `KeepAlive` on lease (agent never sees the lease) |
-| *(agent disconnects)* | Watch detects → marks services unhealthy | Lease expires → key deleted → Watch fires |
+| `Apply(Node)` (on stream open) | Validates platform/capabilities → stores node, tracks in-memory | `Put` node resource (persistent, no lease) |
+| *(stream alive)* | Node tracked as alive in-memory | No etcd writes — liveness is implicit from gRPC stream health |
+| *(stream disconnects)* | Grace period timer starts in-memory | No etcd write until grace period expires |
+| *(grace period expires)* | Marks node as lost → marks services unhealthy | `Put` node status update → Watch fires |
+| *(agent reconnects within grace)* | Timer cancelled, node resumes | No etcd write needed |
 | *(service applied)* | DNS adapter writes record | Write `/skydns/` key → CoreDNS reads directly |
 | *(route changes)* | Route distributor pushes to agents | Watch on `.../services/` → push via adapters |
 
@@ -293,9 +308,10 @@ type StateStore interface {
     ReleaseIP(ctx context.Context, id domain.ServiceID) error
     GetIPAllocation(ctx context.Context, id domain.ServiceID) (netip.Addr, error)
 
-    // Node lease management
-    GrantNodeLease(ctx context.Context, nodeID string, ttl time.Duration) (LeaseID, error)
-    RenewNodeLease(ctx context.Context, leaseID LeaseID) error
+    // Node lifecycle (persistent state — liveness is tracked in-memory, not here)
+    PersistNode(ctx context.Context, nodeID string, node *domain.Node) error
+    MarkNodeLost(ctx context.Context, nodeID string) error
+    DeregisterNode(ctx context.Context, nodeID string) error
 
     // Leadership
     IsLeader() bool
@@ -342,10 +358,10 @@ Alternative adapters (e.g., cloud DNS APIs, PowerDNS, RFC 2136 dynamic updates) 
 | --- | --- |
 | `embed.go` | Embedded etcd server setup, bootstrap, peer configuration |
 | `resource_store.go` | `EtcdResourceStore` implementing the generic `ResourceStore` outbound port |
-| `state_store.go` | `EtcdStateStore` implementing the `StateStore` outbound port (IP allocations, leases, leadership) |
+| `state_store.go` | `EtcdStateStore` implementing the `StateStore` outbound port (IP allocations, node persistence, leadership) |
 | `txn.go` | Transaction helpers for atomic IP allocation and service registration |
 | `watch.go` | Watch wrappers that convert etcd watch events to domain events |
-| `lease.go` | Lease management for node liveness |
+| `node_tracker.go` | In-memory node liveness tracker with grace period timers |
 
 #### Domain Layer — No Changes
 
@@ -386,7 +402,7 @@ Agent (gRPC)          gRPC Adapter          Application Service       EtcdStateS
 
 ### 6. Watch-Driven Side Effects
 
-State changes automatically trigger downstream actions via etcd watches:
+State changes automatically trigger downstream actions via etcd watches and in-memory events:
 
 ```
   etcd Watch on /omnimesh/services/*
@@ -401,9 +417,17 @@ State changes automatically trigger downstream actions via etcd watches:
        │
        └──► RouteDistributor adapter → push to agents (BGP / gRPC / NATS)
 
-  etcd Watch on /omnimesh/nodes/* (lease expiry events)
+  In-memory: gRPC stream disconnect detected
        │
-       └──► NodeManager → mark services unhealthy, withdraw routes
+       └──► NodeLivenessTracker → start grace period timer
+            │
+            ├── (agent reconnects) → cancel timer, resume
+            │
+            └── (grace period expires) → MarkNodeLost(etcd)
+                 │
+                 └──► etcd Watch fires on /omnimesh/nodes/*
+                      │
+                      └──► NodeManager → mark services unhealthy, withdraw routes
 ```
 
 ### 7. Follower Write Forwarding
@@ -481,6 +505,7 @@ dns:
 | **etcd version coupling** | The embedded etcd version is pinned. Upgrades require testing but are infrequent. |
 | **Cross-platform testing** | etcd is primarily optimized for Linux but works on Windows/macOS. Omnimesh CI must test all three. Only the control plane embeds etcd; agents do not. |
 | **Minimum 3 nodes for HA** | Raft quorum requires 2 of 3 (or 3 of 5). Single-node works for dev/test without fault tolerance. |
+| **In-memory liveness tracking** | Node liveness state is tracked in-memory, not in etcd. On control plane leader failover, all agents must reconnect to the new leader and grace period timers reset. During the failover window, transient disconnections are not detected. This trade-off eliminates the O(N)-per-interval write pressure on etcd. |
 
 ---
 

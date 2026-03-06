@@ -362,11 +362,56 @@ const (
     DependencyManual     DependencyOrigin = iota  // From --depends-on CLI flag
     DependencyAuthzPolicy                          // Auto-derived from ALLOW policy
 )
+
 ```
 
 #### 5.3 Namespace-Level Policies and Dependencies
 
 A namespace-level ALLOW policy (e.g., "all services in `monitoring` can call all services in `production`") creates dependencies for **all current services** in those namespaces. When new services are added to either namespace, the dependency graph is automatically updated.
+
+##### Addressing Dependency Graph Explosion
+
+Namespace-wide or wildcard policies can theoretically cause O(N×M) dependency calculations (every source service × every destination service), which defeats the memory-saving goals of scoped distribution. The control plane addresses this through **aggregate routing rules and lazy resolution**:
+
+1. **Namespace-level wildcard routes**: Instead of pushing thousands of individual service IPs to agents, the control plane pushes a **namespace-level wildcard route** when a namespace-wide policy exists. The dependency graph stores this as a single aggregate entry:
+
+    ```go
+    type ServiceDependency struct {
+        Target   ServiceID        // ServiceID.Name may be "*" for namespace-wide
+        Origin   DependencyOrigin
+        PolicyName string
+    }
+    // Example: order-service depends-on production/* (namespace wildcard)
+    ```
+
+2. **Lazy DNS resolution**: When an agent encounters traffic for a destination within a wildcard-authorized namespace, it resolves the specific mesh IP via a lightweight **local DNS lookup** to CoreDNS (already deployed alongside the control plane). The agent caches the resolved IP-to-route mapping for subsequent requests.
+
+3. **On-demand scope expansion**: After a DNS-resolved route is used, the agent requests the specific service's traffic policy and health data from the control plane in the background. The control plane adds the individual service to the agent's scope for future incremental updates.
+
+```
+Agent (node-1)                        CoreDNS                     Control Plane
+    │                                    │                              │
+    │ (has wildcard route for             │                              │
+    │  namespace "production")            │                              │
+    │                                    │                              │
+    │ Traffic to unknown-service          │                              │
+    │                                    │                              │
+    │ DNS: unknown-service.omnimesh.local ───────────────────────────►│
+    │ 100.64.0.42                        │                              │
+    │◄───────────────────────────────────│                              │
+    │                                    │                              │
+    │ Cache: unknown-service → 100.64.0.42                               │
+    │ Route traffic via HBONE                                            │
+    │                                                                    │
+    │ (background) Request scope expansion for unknown-service           │
+    ───────────────────────────────────────────────────────────────────►│
+    │                                                                    │
+```
+
+This approach ensures:
+- **Memory stays proportional to actual traffic**: agents only hold routes for services they actually communicate with, not for every service authorized by a wildcard policy.
+- **Dependency graph stays compact**: a namespace-wide policy creates one aggregate dependency entry, not N×M individual entries.
+- **CoreDNS is already deployed**: no additional infrastructure is needed for the DNS resolution step.
 
 ---
 

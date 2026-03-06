@@ -227,7 +227,7 @@ Service A (TCP)       Agent (node-1)                         Agent (node-2)     
 
 This design is inspired by Istio ztunnel's HBONE implementation and has critical advantages:
 
-1. **Universal trace propagation** — since agent-to-agent communication is always HTTP/2, trace context (`traceparent` / `tracestate`) can be injected as HTTP/2 headers on the CONNECT request, **even when the inner payload is raw TCP**. This eliminates the TCP tracing blind spot entirely.
+1. **Hop-level trace propagation** — since agent-to-agent communication is always HTTP/2, trace context (`traceparent` / `tracestate`) can be injected as HTTP/2 headers on the CONNECT request, **even when the inner payload is raw TCP**. This provides **mesh-level hop tracing** for all protocols. However, for unmodified TCP applications, end-to-end distributed tracing is **not** achieved — the target application receives no trace context in the TCP payload, and subsequent outbound calls from the target start a new trace. End-to-end tracing for TCP requires L7 protocols (HTTP/gRPC) or application-level instrumentation (e.g., OpenTelemetry SDK).
 2. **Metadata transport** — source SPIFFE ID, destination service, authorization context, and other mesh metadata are carried as HTTP/2 headers on the tunnel, independent of the application protocol.
 3. **Multiplexed connections** — HTTP/2 multiplexing allows multiple logical streams (service connections) over a single TCP connection between two agents, reducing connection overhead.
 4. **Unified encryption** — mTLS is established once at the HTTP/2 layer. The inner TCP payload does not need its own TLS (the tunnel provides encryption).

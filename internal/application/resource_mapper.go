@@ -3,6 +3,7 @@ package application
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 )
@@ -75,11 +76,15 @@ func resourceToService(r *model.Resource) (*model.Service, error) {
 // namespaceSpec is the JSON spec representation for Namespace resources.
 type namespaceSpec struct {
 	Isolation string `json:"isolation,omitempty"`
+	CIDR      string `json:"cidr,omitempty"`
 }
 
 // namespaceToResource converts a domain Namespace to a generic Resource.
 func namespaceToResource(ns *model.Namespace) *model.Resource {
 	spec := namespaceSpec{Isolation: ns.Isolation.String()}
+	if ns.CIDR.IsValid() {
+		spec.CIDR = ns.CIDR.String()
+	}
 	specJSON, _ := json.Marshal(spec)
 
 	return &model.Resource{
@@ -116,6 +121,14 @@ func resourceToNamespace(r *model.Resource) (*model.Namespace, error) {
 		ns.Isolation = model.NamespaceIsolationOpen
 	default:
 		ns.Isolation = model.NamespaceIsolationStrict
+	}
+
+	if spec.CIDR != "" {
+		cidr, err := netip.ParsePrefix(spec.CIDR)
+		if err != nil {
+			return nil, fmt.Errorf("parse namespace CIDR %q: %w", spec.CIDR, err)
+		}
+		ns.CIDR = cidr
 	}
 
 	return ns, nil

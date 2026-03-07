@@ -1,5 +1,7 @@
 package model
 
+import "net/netip"
+
 // NamespaceIsolation determines the default authorization behavior within a namespace.
 type NamespaceIsolation int
 
@@ -28,4 +30,7 @@ type Namespace struct {
 	Name      string
 	Labels    map[string]string
 	Isolation NamespaceIsolation
+	// CIDR is the IP prefix used for allocating mesh IPs to services in this namespace.
+	// It is immutable after namespace creation.
+	CIDR netip.Prefix
 }

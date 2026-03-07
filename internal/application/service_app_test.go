@@ -8,8 +8,9 @@ import (
 
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
-	domainservice "github.com/esachser/omnimeshcontrol/internal/domain/service"
 )
+
+var svcTestCIDR = netip.MustParsePrefix("100.64.0.0/10")
 
 func newTestServiceApp(t *testing.T) (*ServiceAppService, *mockResourceStore, *mockStateStore, *mockDNSManager, *mockRouteDistributor) {
 	t.Helper()
@@ -18,16 +19,16 @@ func newTestServiceApp(t *testing.T) (*ServiceAppService, *mockResourceStore, *m
 	dns := newMockDNSManager()
 	routes := newMockRouteDistributor()
 	identity := newMockIdentityManager()
-	alloc, _ := domainservice.NewIPAllocator(netip.MustParsePrefix("100.64.0.0/10"))
+	nsApp := NewNamespaceAppService(resources, svcTestCIDR, nil)
 
 	svc := NewServiceAppService(ServiceAppServiceConfig{
-		Resources:   resources,
-		State:       state,
-		DNS:         dns,
-		Routes:      routes,
-		Identity:    identity,
-		IPAllocator: alloc,
-		DNSZone:     "omnimesh.local",
+		Resources:  resources,
+		State:      state,
+		DNS:        dns,
+		Routes:     routes,
+		Identity:   identity,
+		Namespaces: nsApp,
+		DNSZone:    "omnimesh.local",
 	})
 	return svc, resources, state, dns, routes
 }
@@ -37,7 +38,7 @@ func TestServiceAppService_Apply(t *testing.T) {
 	ctx := context.Background()
 
 	// Create namespace first.
-	nsApp := NewNamespaceAppService(resources, nil)
+	nsApp := NewNamespaceAppService(resources, svcTestCIDR, nil)
 	if err := nsApp.Apply(ctx, &model.Namespace{Name: "production"}); err != nil {
 		t.Fatalf("namespace apply: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestServiceAppService_Apply_IdempotentIP(t *testing.T) {
 	app, resources, _, _, _ := newTestServiceApp(t)
 	ctx := context.Background()
 
-	nsApp := NewNamespaceAppService(resources, nil)
+	nsApp := NewNamespaceAppService(resources, svcTestCIDR, nil)
 	nsApp.Apply(ctx, &model.Namespace{Name: "production"})
 
 	svc := &model.Service{
@@ -134,7 +135,7 @@ func TestServiceAppService_GetAndDelete(t *testing.T) {
 	app, resources, _, _, _ := newTestServiceApp(t)
 	ctx := context.Background()
 
-	nsApp := NewNamespaceAppService(resources, nil)
+	nsApp := NewNamespaceAppService(resources, svcTestCIDR, nil)
 	nsApp.Apply(ctx, &model.Namespace{Name: "production"})
 
 	svc := &model.Service{
@@ -168,7 +169,7 @@ func TestServiceAppService_List(t *testing.T) {
 	app, resources, _, _, _ := newTestServiceApp(t)
 	ctx := context.Background()
 
-	nsApp := NewNamespaceAppService(resources, nil)
+	nsApp := NewNamespaceAppService(resources, svcTestCIDR, nil)
 	nsApp.Apply(ctx, &model.Namespace{Name: "production"})
 
 	for _, name := range []string{"svc-a", "svc-b", "svc-c"} {

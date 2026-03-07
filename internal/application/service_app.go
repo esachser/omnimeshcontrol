@@ -9,7 +9,6 @@ import (
 
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
-	domainservice "github.com/esachser/omnimeshcontrol/internal/domain/service"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 )
@@ -17,26 +16,26 @@ import (
 // ServiceAppService implements the ServiceManager inbound port.
 // It orchestrates: validate → allocate IP → register identity → persist → DNS → route.
 type ServiceAppService struct {
-	resources   outbound.ResourceStore
-	state       outbound.StateStore
-	dns         outbound.DNSRecordManager
-	routes      outbound.RouteDistributor
-	identity    outbound.IdentityManager
-	ipAllocator *domainservice.IPAllocator
-	dnsZone     string
-	logger      *slog.Logger
+	resources  outbound.ResourceStore
+	state      outbound.StateStore
+	dns        outbound.DNSRecordManager
+	routes     outbound.RouteDistributor
+	identity   outbound.IdentityManager
+	namespaces inbound.NamespaceManager
+	dnsZone    string
+	logger     *slog.Logger
 }
 
 // ServiceAppServiceConfig holds dependencies for ServiceAppService.
 type ServiceAppServiceConfig struct {
-	Resources   outbound.ResourceStore
-	State       outbound.StateStore
-	DNS         outbound.DNSRecordManager
-	Routes      outbound.RouteDistributor
-	Identity    outbound.IdentityManager
-	IPAllocator *domainservice.IPAllocator
-	DNSZone     string
-	Logger      *slog.Logger
+	Resources  outbound.ResourceStore
+	State      outbound.StateStore
+	DNS        outbound.DNSRecordManager
+	Routes     outbound.RouteDistributor
+	Identity   outbound.IdentityManager
+	Namespaces inbound.NamespaceManager
+	DNSZone    string
+	Logger     *slog.Logger
 }
 
 // NewServiceAppService creates a new ServiceAppService.
@@ -45,14 +44,14 @@ func NewServiceAppService(cfg ServiceAppServiceConfig) *ServiceAppService {
 		cfg.Logger = slog.Default()
 	}
 	return &ServiceAppService{
-		resources:   cfg.Resources,
-		state:       cfg.State,
-		dns:         cfg.DNS,
-		routes:      cfg.Routes,
-		identity:    cfg.Identity,
-		ipAllocator: cfg.IPAllocator,
-		dnsZone:     cfg.DNSZone,
-		logger:      cfg.Logger,
+		resources:  cfg.Resources,
+		state:      cfg.State,
+		dns:        cfg.DNS,
+		routes:     cfg.Routes,
+		identity:   cfg.Identity,
+		namespaces: cfg.Namespaces,
+		dnsZone:    cfg.DNSZone,
+		logger:     cfg.Logger,
 	}
 }
 
@@ -65,17 +64,17 @@ func (s *ServiceAppService) Apply(ctx context.Context, service *model.Service) e
 		return fmt.Errorf("service apply: %w: namespace is required", domain.ErrInvalidNamespace)
 	}
 
-	// Check namespace exists.
-	nsKey := "core.omnimesh.io/v1/Namespace/" + service.ID.Namespace
-	if _, err := s.resources.Get(ctx, nsKey); err != nil {
+	// Get namespace (validates existence + provides CIDR for IP allocation).
+	ns, err := s.namespaces.Get(ctx, service.ID.Namespace)
+	if err != nil {
 		return fmt.Errorf("service apply: namespace %q: %w", service.ID.Namespace, domain.ErrNamespaceNotFound)
 	}
 
 	// Allocate mesh IP (idempotent — check if already allocated).
 	existing, err := s.state.GetIPAllocation(ctx, service.ID)
 	if err != nil {
-		// No allocation yet: allocate a new one.
-		addr, allocErr := s.state.AllocateIP(ctx, service.ID, s.ipAllocator.CIDR())
+		// No allocation yet: allocate a new one using namespace's CIDR.
+		addr, allocErr := s.state.AllocateIP(ctx, service.ID, ns.CIDR)
 		if allocErr != nil {
 			return fmt.Errorf("service apply: %w", allocErr)
 		}

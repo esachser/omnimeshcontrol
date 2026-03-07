@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
@@ -13,18 +14,21 @@ import (
 
 // NamespaceAppService implements the NamespaceManager inbound port.
 type NamespaceAppService struct {
-	resources outbound.ResourceStore
-	logger    *slog.Logger
+	resources   outbound.ResourceStore
+	defaultCIDR netip.Prefix
+	logger      *slog.Logger
 }
 
 // NewNamespaceAppService creates a new NamespaceAppService.
-func NewNamespaceAppService(resources outbound.ResourceStore, logger *slog.Logger) *NamespaceAppService {
+// defaultCIDR is used when a namespace is created without an explicit CIDR.
+func NewNamespaceAppService(resources outbound.ResourceStore, defaultCIDR netip.Prefix, logger *slog.Logger) *NamespaceAppService {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &NamespaceAppService{
-		resources: resources,
-		logger:    logger,
+		resources:   resources,
+		defaultCIDR: defaultCIDR,
+		logger:      logger,
 	}
 }
 
@@ -35,11 +39,45 @@ func (s *NamespaceAppService) Apply(ctx context.Context, namespace *model.Namesp
 	}
 
 	key := "core.omnimesh.io/v1/Namespace/" + namespace.Name
+
+	// Check if namespace already exists (for CIDR immutability).
+	existingResource, err := s.resources.Get(ctx, key)
+	if err == nil {
+		// Namespace exists — enforce CIDR immutability.
+		existing, mapErr := resourceToNamespace(existingResource)
+		if mapErr != nil {
+			return fmt.Errorf("namespace apply: %w", mapErr)
+		}
+
+		if existing.CIDR.IsValid() && namespace.CIDR.IsValid() && existing.CIDR != namespace.CIDR {
+			return fmt.Errorf("namespace apply %q: CIDR cannot be changed after creation (current: %s, requested: %s)",
+				namespace.Name, existing.CIDR, namespace.CIDR)
+		}
+		// Preserve existing CIDR on update if not specified.
+		if !namespace.CIDR.IsValid() {
+			namespace.CIDR = existing.CIDR
+		}
+	} else {
+		// New namespace — assign default CIDR if not specified.
+		if !namespace.CIDR.IsValid() {
+			namespace.CIDR = s.defaultCIDR
+		}
+	}
+
+	// Validate CIDR.
+	if !namespace.CIDR.IsValid() {
+		return fmt.Errorf("namespace apply %q: %w: CIDR is required", namespace.Name, domain.ErrInvalidCIDR)
+	}
+
 	if _, err := s.resources.Put(ctx, key, namespaceToResource(namespace)); err != nil {
 		return fmt.Errorf("namespace apply: %w", err)
 	}
 
-	s.logger.Info("namespace applied", "name", namespace.Name, "isolation", namespace.Isolation)
+	s.logger.Info("namespace applied",
+		"name", namespace.Name,
+		"isolation", namespace.Isolation,
+		"cidr", namespace.CIDR,
+	)
 	return nil
 }
 

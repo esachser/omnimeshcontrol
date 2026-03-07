@@ -20,7 +20,6 @@ import (
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/etcdstore"
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/routedist"
 	"github.com/esachser/omnimeshcontrol/internal/application"
-	domainservice "github.com/esachser/omnimeshcontrol/internal/domain/service"
 	"google.golang.org/grpc"
 )
 
@@ -74,31 +73,25 @@ func run(logger *slog.Logger) error {
 	dnsManager := etcddns.NewEtcdDNSRecordManager(embedded.Client(), dnsZone)
 	routeDistributor := routedist.NewGRPCRouteDistributor(logger)
 
-	// --- Wire domain services ---
-	cidr, err := netip.ParsePrefix(meshCIDR)
+	// --- Parse default CIDR (used for namespaces that don't specify one) ---
+	defaultCIDR, err := netip.ParsePrefix(meshCIDR)
 	if err != nil {
-		return fmt.Errorf("parse mesh CIDR: %w", err)
+		return fmt.Errorf("parse default mesh CIDR: %w", err)
 	}
-	ipAllocator, err := domainservice.NewIPAllocator(cidr)
-	if err != nil {
-		return fmt.Errorf("create IP allocator: %w", err)
-	}
-	policyValidator := domainservice.NewPolicyValidator()
-	authzEvaluator := domainservice.NewAuthzEvaluator()
 
 	// --- Wire application services ---
-	svcApp := application.NewServiceAppService(application.ServiceAppServiceConfig{
-		Resources:   resourceStore,
-		State:       stateStore,
-		DNS:         dnsManager,
-		Routes:      routeDistributor,
-		Identity:    nil, // SPIRE integration deferred
-		IPAllocator: ipAllocator,
-		DNSZone:     dnsZone,
-		Logger:      logger,
-	})
+	nsApp := application.NewNamespaceAppService(resourceStore, defaultCIDR, logger)
 
-	nsApp := application.NewNamespaceAppService(resourceStore, logger)
+	svcApp := application.NewServiceAppService(application.ServiceAppServiceConfig{
+		Resources:  resourceStore,
+		State:      stateStore,
+		DNS:        dnsManager,
+		Routes:     routeDistributor,
+		Identity:   nil, // SPIRE integration deferred
+		Namespaces: nsApp,
+		DNSZone:    dnsZone,
+		Logger:     logger,
+	})
 
 	// NodeLivenessTracker with callback to mark nodes as lost.
 	nodeTracker := etcdstore.NewNodeLivenessTracker(gracePeriod, func(ctx context.Context, nodeID string) {
@@ -113,8 +106,6 @@ func run(logger *slog.Logger) error {
 	// Full wiring will come when the etcd-backed TrafficPolicyStore and
 	// EndpointHealthStore adapters are implemented.
 	healthApp := application.NewHealthAppService(nil, routeDistributor, logger)
-	_ = policyValidator // Will be wired in Phase 5 when full policy flow is connected.
-	_ = authzEvaluator  // Will be wired in Phase 5.
 
 	// --- Start gRPC server ---
 	lis, err := net.Listen("tcp", grpcAddr)

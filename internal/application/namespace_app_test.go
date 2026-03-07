@@ -3,15 +3,18 @@ package application
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 )
 
+var testCIDR = netip.MustParsePrefix("100.64.0.0/10")
+
 func TestNamespaceAppService_ApplyAndGet(t *testing.T) {
 	resources := newMockResourceStore()
-	app := NewNamespaceAppService(resources, nil)
+	app := NewNamespaceAppService(resources, testCIDR, nil)
 	ctx := context.Background()
 
 	ns := &model.Namespace{
@@ -38,7 +41,7 @@ func TestNamespaceAppService_ApplyAndGet(t *testing.T) {
 
 func TestNamespaceAppService_DeleteEmpty(t *testing.T) {
 	resources := newMockResourceStore()
-	app := NewNamespaceAppService(resources, nil)
+	app := NewNamespaceAppService(resources, testCIDR, nil)
 	ctx := context.Background()
 
 	app.Apply(ctx, &model.Namespace{Name: "empty-ns"})
@@ -55,7 +58,7 @@ func TestNamespaceAppService_DeleteEmpty(t *testing.T) {
 
 func TestNamespaceAppService_DeleteNonEmpty(t *testing.T) {
 	resources := newMockResourceStore()
-	app := NewNamespaceAppService(resources, nil)
+	app := NewNamespaceAppService(resources, testCIDR, nil)
 	ctx := context.Background()
 
 	app.Apply(ctx, &model.Namespace{Name: "non-empty"})
@@ -82,7 +85,7 @@ func TestNamespaceAppService_DeleteNonEmpty(t *testing.T) {
 
 func TestNamespaceAppService_List(t *testing.T) {
 	resources := newMockResourceStore()
-	app := NewNamespaceAppService(resources, nil)
+	app := NewNamespaceAppService(resources, testCIDR, nil)
 	ctx := context.Background()
 
 	for _, name := range []string{"ns-a", "ns-b", "ns-c"} {

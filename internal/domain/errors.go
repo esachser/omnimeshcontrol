@@ -39,6 +39,8 @@ var (
 	ErrIPExhausted = errors.New("mesh IP address space exhausted")
 	// ErrIPConflict indicates the requested IP is already allocated to another service.
 	ErrIPConflict = errors.New("mesh IP address conflict")
+	// ErrInvalidCIDR indicates an invalid or missing CIDR prefix.
+	ErrInvalidCIDR = errors.New("invalid CIDR prefix")
 )
 
 // Traffic policy errors.

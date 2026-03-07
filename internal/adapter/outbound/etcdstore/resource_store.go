@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
@@ -32,16 +33,34 @@ func (s *EtcdResourceStore) fullKey(key string) string {
 
 // Put creates or updates a resource, returning the new revision.
 func (s *EtcdResourceStore) Put(ctx context.Context, key string, resource *model.Resource) (int64, error) {
+	now := time.Now()
+	// Get current revision
+	respGet, err := s.client.Get(ctx, s.fullKey(key))
+	if err != nil {
+		return 0, fmt.Errorf("resource store: get %q: %w", key, err)
+	}
+	if len(respGet.Kvs) > 0 {
+		resource.Metadata.Revision = respGet.Kvs[0].ModRevision + 1
+		// Parse value and copy CreatedAt
+		var existing model.Resource
+		if err := json.Unmarshal(respGet.Kvs[0].Value, &existing); err == nil {
+			resource.Metadata.CreatedAt = existing.Metadata.CreatedAt
+		}
+	}
+	if resource.Metadata.CreatedAt == 0 {
+		resource.Metadata.CreatedAt = uint64(now.UnixMilli())
+	}
+	resource.Metadata.UpdatedAt = uint64(now.UnixMilli())
 	data, err := json.Marshal(resource)
 	if err != nil {
 		return 0, fmt.Errorf("resource store: marshal: %w", err)
 	}
 
-	resp, err := s.client.Put(ctx, s.fullKey(key), string(data))
+	respPut, err := s.client.Put(ctx, s.fullKey(key), string(data))
 	if err != nil {
 		return 0, fmt.Errorf("resource store: put %q: %w", key, err)
 	}
-	return resp.Header.Revision, nil
+	return respPut.Header.Revision, nil
 }
 
 // Get retrieves a resource by key.

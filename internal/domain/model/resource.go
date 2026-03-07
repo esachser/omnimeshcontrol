@@ -4,7 +4,6 @@ package model
 
 import (
 	"encoding/json"
-	"time"
 )
 
 // Resource is the generic envelope for all declarative resources in the mesh.
@@ -23,8 +22,8 @@ type ResourceMetadata struct {
 	Namespace string            `json:"namespace,omitempty"`
 	Labels    map[string]string `json:"labels,omitempty"`
 	Revision  int64             `json:"revision,omitempty"`
-	CreatedAt time.Time         `json:"createdAt,omitempty"`
-	UpdatedAt time.Time         `json:"updatedAt,omitempty"`
+	CreatedAt uint64            `json:"createdAt,omitempty"`
+	UpdatedAt uint64            `json:"updatedAt,omitempty"`
 }
 
 // ResourceKey returns the storage key for this resource in the format

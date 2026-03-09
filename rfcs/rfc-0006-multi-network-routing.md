@@ -162,6 +162,25 @@ Agents only actively probe *local* services on their own node. Cross-target heal
 
 When an agent in `Target A` attempts to tunnel traffic to `Target B`'s Gateway and receives TCP connection failures, it trips its local circuit breaker and reports the failure to the control plane. The control plane then aggregates these reports per the updated Global Outlier Detection model above.
 
+## etcd Key Space Extension
+
+Following the key space design from RFC-0002, new resources for multi-network routing are stored under the `/omnimesh/resources/` prefix:
+
+```text
+/omnimesh/
+└── resources/
+    ├── core.omnimesh.io/v1/
+    │   └── networktargets/
+    │       ├── k8s-cluster-us-east                    → NetworkTarget resource JSON
+    │       └── bare-metal-dc1                         → NetworkTarget resource JSON
+    │
+    └── traffic.omnimesh.io/v1/
+        └── targetroutes/
+            └── production/
+                ├── payment-service-route-to-useast    → TargetRoute resource JSON
+                └── payment-service-route-to-baremetal → TargetRoute resource JSON
+```
+
 ## Trade-offs and Drawbacks
 
 | Concern | Discussion |

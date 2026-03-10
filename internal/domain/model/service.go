@@ -1,6 +1,10 @@
 package model
 
-import "net/netip"
+import (
+	"fmt"
+	"net/netip"
+	"strings"
+)
 
 // ServiceID uniquely identifies a service within the mesh.
 type ServiceID struct {
@@ -11,6 +15,18 @@ type ServiceID struct {
 // String returns the canonical string representation of a service ID.
 func (id ServiceID) String() string {
 	return id.Namespace + "/" + id.Name
+}
+
+// ParseServiceID parses a string in "namespace/name" format into a ServiceID.
+func ParseServiceID(s string) (ServiceID, error) {
+	parts := strings.SplitN(s, "/", 2)
+	if len(parts) != 2 {
+		return ServiceID{}, fmt.Errorf("invalid service ID format %q: expected namespace/name", s)
+	}
+	return ServiceID{
+		Namespace: parts[0],
+		Name:      parts[1],
+	}, nil
 }
 
 // ServiceProtocol indicates the application protocol of a service.

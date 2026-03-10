@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
@@ -20,6 +21,8 @@ type AgentScopeAppService struct {
 	policyStore outbound.TrafficPolicyStore
 	healthStore outbound.EndpointHealthStore
 	depStore    outbound.DependencyStore
+	routes      outbound.RouteDistributor
+	targets     inbound.TargetManager
 	logger      *slog.Logger
 }
 
@@ -30,6 +33,8 @@ func NewAgentScopeAppService(
 	policyStore outbound.TrafficPolicyStore,
 	healthStore outbound.EndpointHealthStore,
 	depStore outbound.DependencyStore,
+	routes outbound.RouteDistributor,
+	targets inbound.TargetManager,
 	logger *slog.Logger,
 ) *AgentScopeAppService {
 	if logger == nil {
@@ -41,6 +46,8 @@ func NewAgentScopeAppService(
 		policyStore: policyStore,
 		healthStore: healthStore,
 		depStore:    depStore,
+		routes:      routes,
+		targets:     targets,
 		logger:      logger,
 	}
 }
@@ -87,11 +94,49 @@ func (s *AgentScopeAppService) GetAgentScope(ctx context.Context, nodeID string)
 		}
 	}
 
+	// Fetch requesting node to determine its Target.
+	reqNode, err := s.state.GetNode(ctx, nodeID)
+	if err != nil {
+		s.logger.Warn("failed to get requesting node locality", "nodeID", nodeID, "error", err)
+	}
+	reqTarget := ""
+	if reqNode != nil {
+		reqTarget = reqNode.Target
+	}
+
+	// Route Distribution with Gateway Address Substitution (RFC-0006)
+	if s.routes != nil && s.targets != nil {
+		allRoutes := s.routes.AllRoutes()
+		for _, r := range allRoutes {
+			// Copy the route to modify nodes without affecting the global state.
+			agentRoute := r
+
+			for i, endpoint := range agentRoute.TargetNodes {
+				destNode, err := s.state.GetNode(ctx, endpoint.NodeID)
+				if err != nil {
+					continue // Ignore missing nodes in this loop
+				}
+
+				// If the Destination Target is different from Requesting Target, substitute address.
+				if destNode.Target != reqTarget && destNode.Target != "" {
+					netTarget, err := s.targets.Get(ctx, destNode.Target)
+					if err == nil && netTarget != nil && netTarget.GatewayAddress != "" {
+						if addr, err := netip.ParseAddrPort(netTarget.GatewayAddress); err == nil {
+							agentRoute.TargetNodes[i].Addr = addr
+						}
+					}
+				}
+			}
+			scope.Routes = append(scope.Routes, agentRoute)
+		}
+	}
+
 	s.logger.Info("agent scope computed",
 		"nodeID", nodeID,
 		"services", len(scope.Services),
 		"policies", len(scope.TrafficPolicies),
 		"healthRecords", len(scope.EndpointHealth),
+		"routes", len(scope.Routes),
 	)
 
 	return scope, nil

@@ -14,4 +14,7 @@ type RouteDistributor interface {
 	// WithdrawRoute withdraws a route, indicating the service is no longer reachable
 	// via the specified nodes.
 	WithdrawRoute(ctx context.Context, route model.MeshRoute) error
+
+	// AllRoutes returns all currently announced routes.
+	AllRoutes() []model.MeshRoute
 }

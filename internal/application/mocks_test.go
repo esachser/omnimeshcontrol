@@ -135,6 +135,10 @@ func (m *mockStateStore) GetIPAllocation(_ context.Context, id model.ServiceID) 
 	return addr, nil
 }
 
+func (m *mockStateStore) GetNode(_ context.Context, nodeID string) (*model.Node, error) {
+	return nil, domain.ErrNodeNotFound
+}
+
 func (m *mockStateStore) PersistNode(_ context.Context, nodeID string, node *model.Node) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -195,7 +199,7 @@ func (m *mockDNSManager) DeleteRecord(_ context.Context, fqdn string) error {
 // --- Mock RouteDistributor ---
 
 type mockRouteDistributor struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	routes map[string]model.MeshRoute
 }
 
@@ -215,6 +219,16 @@ func (m *mockRouteDistributor) WithdrawRoute(_ context.Context, route model.Mesh
 	defer m.mu.Unlock()
 	delete(m.routes, route.ServiceID.String())
 	return nil
+}
+
+func (m *mockRouteDistributor) AllRoutes() []model.MeshRoute {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var all []model.MeshRoute
+	for _, r := range m.routes {
+		all = append(all, r)
+	}
+	return all
 }
 
 // --- Mock IdentityManager ---

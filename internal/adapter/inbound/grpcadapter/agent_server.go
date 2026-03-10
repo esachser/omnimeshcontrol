@@ -68,6 +68,7 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 	node := &model.Node{
 		ID:       nodeID,
 		Platform: platformFromString(reg.Platform),
+		Target:   reg.Target,
 		Addr:     addr,
 		Labels:   reg.Labels,
 	}
@@ -207,6 +208,8 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 			ri.TargetNodes = append(ri.TargetNodes, &omnimeshv1.NodeEndpointInfo{
 				NodeId: node.NodeID,
 				Addr:   node.Addr.String(),
+				Target: node.Target,
+				Labels: node.Labels,
 			})
 		}
 		snapshot.Routes = append(snapshot.Routes, ri)

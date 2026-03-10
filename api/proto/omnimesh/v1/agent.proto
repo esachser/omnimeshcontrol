@@ -27,10 +27,11 @@ message AgentMessage {
 
 message RegisterNodeRequest {
   string node_id = 1;
-  string platform = 2;       // "linux", "windows", "darwin"
-  string addr = 3;           // "host:port" for HBONE tunneling
+  string platform = 2; // "linux", "windows", "darwin"
+  string addr = 3; // "host:port" for HBONE tunneling
   map<string, string> labels = 4;
-  repeated string services = 5;  // ServiceIDs in "namespace/name" format
+  repeated string services = 5; // ServiceIDs in "namespace/name" format
+  string target = 6; // NetworkTarget the agent belongs to
 }
 
 message HealthReport {
@@ -38,7 +39,7 @@ message HealthReport {
   string service_name = 2;
   string endpoint_address = 3;
   EndpointHealthStatus status = 4;
-  string probe_type = 5;  // "TCP", "HTTP", "gRPC"
+  string probe_type = 5; // "TCP", "HTTP", "gRPC"
 }
 
 message DrainRequest {
@@ -115,6 +116,8 @@ message RouteInfo {
 message NodeEndpointInfo {
   string node_id = 1;
   string addr = 2;
+  string target = 3;
+  map<string, string> labels = 4;
 }
 
 message TrafficPolicyInfo {
@@ -122,7 +125,7 @@ message TrafficPolicyInfo {
   string namespace = 2;
   string target_service_namespace = 3;
   string target_service_name = 4;
-  bytes spec = 5;  // JSON-encoded policy spec
+  bytes spec = 5; // JSON-encoded policy spec
 }
 
 message AuthzPolicyInfo {

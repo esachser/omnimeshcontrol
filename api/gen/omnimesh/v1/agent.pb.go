@@ -227,6 +227,7 @@ type RegisterNodeRequest struct {
 	Addr          string                 `protobuf:"bytes,3,opt,name=addr,proto3" json:"addr,omitempty"`         // "host:port" for HBONE tunneling
 	Labels        map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Services      []string               `protobuf:"bytes,5,rep,name=services,proto3" json:"services,omitempty"` // ServiceIDs in "namespace/name" format
+	Target        string                 `protobuf:"bytes,6,opt,name=target,proto3" json:"target,omitempty"`     // NetworkTarget the agent belongs to
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -294,6 +295,13 @@ func (x *RegisterNodeRequest) GetServices() []string {
 		return x.Services
 	}
 	return nil
+}
+
+func (x *RegisterNodeRequest) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
 }
 
 type HealthReport struct {
@@ -926,6 +934,8 @@ type NodeEndpointInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	Addr          string                 `protobuf:"bytes,2,opt,name=addr,proto3" json:"addr,omitempty"`
+	Target        string                 `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
+	Labels        map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -972,6 +982,20 @@ func (x *NodeEndpointInfo) GetAddr() string {
 		return x.Addr
 	}
 	return ""
+}
+
+func (x *NodeEndpointInfo) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *NodeEndpointInfo) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
 }
 
 type TrafficPolicyInfo struct {
@@ -1195,13 +1219,14 @@ const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"\rregister_node\x18\x01 \x01(\v2 .omnimesh.v1.RegisterNodeRequestH\x00R\fregisterNode\x12@\n" +
 	"\rhealth_report\x18\x02 \x01(\v2\x19.omnimesh.v1.HealthReportH\x00R\fhealthReport\x12@\n" +
 	"\rdrain_request\x18\x03 \x01(\v2\x19.omnimesh.v1.DrainRequestH\x00R\fdrainRequestB\t\n" +
-	"\apayload\"\xfb\x01\n" +
+	"\apayload\"\x93\x02\n" +
 	"\x13RegisterNodeRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1a\n" +
 	"\bplatform\x18\x02 \x01(\tR\bplatform\x12\x12\n" +
 	"\x04addr\x18\x03 \x01(\tR\x04addr\x12D\n" +
 	"\x06labels\x18\x04 \x03(\v2,.omnimesh.v1.RegisterNodeRequest.LabelsEntryR\x06labels\x12\x1a\n" +
-	"\bservices\x18\x05 \x03(\tR\bservices\x1a9\n" +
+	"\bservices\x18\x05 \x03(\tR\bservices\x12\x16\n" +
+	"\x06target\x18\x06 \x01(\tR\x06target\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe3\x01\n" +
@@ -1248,10 +1273,15 @@ const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"\x11service_namespace\x18\x01 \x01(\tR\x10serviceNamespace\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1b\n" +
 	"\tmesh_addr\x18\x03 \x01(\tR\bmeshAddr\x12@\n" +
-	"\ftarget_nodes\x18\x04 \x03(\v2\x1d.omnimesh.v1.NodeEndpointInfoR\vtargetNodes\"?\n" +
+	"\ftarget_nodes\x18\x04 \x03(\v2\x1d.omnimesh.v1.NodeEndpointInfoR\vtargetNodes\"\xd5\x01\n" +
 	"\x10NodeEndpointInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x12\n" +
-	"\x04addr\x18\x02 \x01(\tR\x04addr\"\xc3\x01\n" +
+	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x16\n" +
+	"\x06target\x18\x03 \x01(\tR\x06target\x12A\n" +
+	"\x06labels\x18\x04 \x03(\v2).omnimesh.v1.NodeEndpointInfo.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc3\x01\n" +
 	"\x11TrafficPolicyInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x128\n" +
@@ -1296,7 +1326,7 @@ func file_omnimesh_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_omnimesh_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_omnimesh_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_omnimesh_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_omnimesh_v1_agent_proto_goTypes = []any{
 	(EndpointHealthStatus)(0),   // 0: omnimesh.v1.EndpointHealthStatus
 	(ScopeUpdateType)(0),        // 1: omnimesh.v1.ScopeUpdateType
@@ -1316,7 +1346,8 @@ var file_omnimesh_v1_agent_proto_goTypes = []any{
 	(*AuthzPolicyInfo)(nil),     // 15: omnimesh.v1.AuthzPolicyInfo
 	(*SelectorInfo)(nil),        // 16: omnimesh.v1.SelectorInfo
 	nil,                         // 17: omnimesh.v1.RegisterNodeRequest.LabelsEntry
-	nil,                         // 18: omnimesh.v1.SelectorInfo.LabelsEntry
+	nil,                         // 18: omnimesh.v1.NodeEndpointInfo.LabelsEntry
+	nil,                         // 19: omnimesh.v1.SelectorInfo.LabelsEntry
 }
 var file_omnimesh_v1_agent_proto_depIdxs = []int32{
 	3,  // 0: omnimesh.v1.AgentMessage.register_node:type_name -> omnimesh.v1.RegisterNodeRequest
@@ -1339,16 +1370,17 @@ var file_omnimesh_v1_agent_proto_depIdxs = []int32{
 	11, // 17: omnimesh.v1.ServiceInfo.endpoints:type_name -> omnimesh.v1.EndpointInfo
 	0,  // 18: omnimesh.v1.EndpointInfo.health:type_name -> omnimesh.v1.EndpointHealthStatus
 	13, // 19: omnimesh.v1.RouteInfo.target_nodes:type_name -> omnimesh.v1.NodeEndpointInfo
-	16, // 20: omnimesh.v1.AuthzPolicyInfo.source:type_name -> omnimesh.v1.SelectorInfo
-	16, // 21: omnimesh.v1.AuthzPolicyInfo.destination:type_name -> omnimesh.v1.SelectorInfo
-	18, // 22: omnimesh.v1.SelectorInfo.labels:type_name -> omnimesh.v1.SelectorInfo.LabelsEntry
-	2,  // 23: omnimesh.v1.AgentService.AgentStream:input_type -> omnimesh.v1.AgentMessage
-	6,  // 24: omnimesh.v1.AgentService.AgentStream:output_type -> omnimesh.v1.ControlMessage
-	24, // [24:25] is the sub-list for method output_type
-	23, // [23:24] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	18, // 20: omnimesh.v1.NodeEndpointInfo.labels:type_name -> omnimesh.v1.NodeEndpointInfo.LabelsEntry
+	16, // 21: omnimesh.v1.AuthzPolicyInfo.source:type_name -> omnimesh.v1.SelectorInfo
+	16, // 22: omnimesh.v1.AuthzPolicyInfo.destination:type_name -> omnimesh.v1.SelectorInfo
+	19, // 23: omnimesh.v1.SelectorInfo.labels:type_name -> omnimesh.v1.SelectorInfo.LabelsEntry
+	2,  // 24: omnimesh.v1.AgentService.AgentStream:input_type -> omnimesh.v1.AgentMessage
+	6,  // 25: omnimesh.v1.AgentService.AgentStream:output_type -> omnimesh.v1.ControlMessage
+	25, // [25:26] is the sub-list for method output_type
+	24, // [24:25] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_omnimesh_v1_agent_proto_init() }
@@ -1372,7 +1404,7 @@ func file_omnimesh_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_omnimesh_v1_agent_proto_rawDesc), len(file_omnimesh_v1_agent_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   17,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

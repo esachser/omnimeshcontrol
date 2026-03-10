@@ -26,6 +26,10 @@ type StateStore interface {
 	// Returns domain.ErrServiceNotFound if no allocation exists.
 	GetIPAllocation(ctx context.Context, id model.ServiceID) (netip.Addr, error)
 
+	// GetNode retrieves a node's state from durable storage.
+	// Returns domain.ErrNodeNotFound if the node does not exist.
+	GetNode(ctx context.Context, nodeID string) (*model.Node, error)
+
 	// PersistNode persists a node's state to durable storage (e.g., etcd).
 	// Called on initial registration and on state changes.
 	PersistNode(ctx context.Context, nodeID string, node *model.Node) error

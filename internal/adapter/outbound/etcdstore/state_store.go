@@ -351,6 +351,24 @@ func (s *EtcdStateStore) GetIPAllocation(ctx context.Context, id model.ServiceID
 	return netip.Addr{}, fmt.Errorf("state store: invalid IP data for %q (len=%d)", id, len(val))
 }
 
+// GetNode retrieves a node's state from etcd.
+func (s *EtcdStateStore) GetNode(ctx context.Context, nodeID string) (*model.Node, error) {
+	key := nodePrefix + nodeID
+	resp, err := s.client.Get(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("state store: get node %q: %w", nodeID, err)
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, fmt.Errorf("state store: get node %q: %w", nodeID, domain.ErrNodeNotFound)
+	}
+
+	var node model.Node
+	if err := json.Unmarshal(resp.Kvs[0].Value, &node); err != nil {
+		return nil, fmt.Errorf("state store: unmarshal node %q: %w", nodeID, err)
+	}
+	return &node, nil
+}
+
 // PersistNode persists a node's state to etcd.
 func (s *EtcdStateStore) PersistNode(ctx context.Context, nodeID string, node *model.Node) error {
 	data, err := json.Marshal(node)

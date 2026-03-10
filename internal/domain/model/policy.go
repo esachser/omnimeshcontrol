@@ -21,6 +21,8 @@ type TrafficPolicy struct {
 	LoadBalancer *LoadBalancerPolicy
 	// OutlierDetection configures global outlier detection. nil means no global outlier detection.
 	OutlierDetection *OutlierDetectionPolicy
+	// Routes defines how traffic is distributed across targets and label subsets.
+	Routes []TrafficRoute
 }
 
 // TrafficPolicyID returns the ServiceID-style identifier for this policy.
@@ -117,4 +119,21 @@ type OutlierDetectionPolicy struct {
 	// MaxEjectionPercent is the maximum percentage of endpoints that can be ejected
 	// simultaneously (safety valve — prevents ejecting all endpoints).
 	MaxEjectionPercent float64
+}
+
+// TrafficRouteDestination explicitly defines the target topology and workload
+// metadata subset being routed to.
+type TrafficRouteDestination struct {
+	// Target is the NetworkTarget identifier. If empty, matches any target.
+	Target string
+	// Labels are the metadata tags for this node, used for subset routing.
+	Labels map[string]string
+}
+
+// TrafficRoute defines a weighted distribution of traffic to a specific destination.
+type TrafficRoute struct {
+	// Destination matches endpoints based on Target and Labels.
+	Destination TrafficRouteDestination
+	// Weight is the relative proportion of traffic this route should receive.
+	Weight int
 }

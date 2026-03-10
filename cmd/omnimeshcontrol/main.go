@@ -105,9 +105,19 @@ func run(logger *slog.Logger) error {
 	// Health and scope services — using nil stores for now (Phase 4 MVP).
 	// Full wiring will come when the etcd-backed TrafficPolicyStore and
 	// EndpointHealthStore adapters are implemented.
-	healthApp := application.NewHealthAppService(nil, routeDistributor, logger)
+	healthApp := application.NewHealthAppService(nil, stateStore, routeDistributor, logger)
 
 	targetApp := application.NewTargetAppService(resourceStore, logger)
+	scopeApp := application.NewAgentScopeAppService(
+		resourceStore,
+		stateStore,
+		nil, // policyStore
+		nil, // healthStore
+		nil, // depStore
+		nil, // TODO: route distributor
+		targetApp,
+		logger.WithGroup("scope_app"),
+	)
 	routeApp := application.NewRouteAppService(resourceStore, logger)
 
 	// --- Start gRPC server ---
@@ -118,7 +128,7 @@ func run(logger *slog.Logger) error {
 
 	grpcServer := grpc.NewServer()
 	controlServer := grpcadapter.NewControlPlaneServer(svcApp, nsApp, targetApp, routeApp, logger)
-	agentServer := grpcadapter.NewAgentServer(nodeApp, healthApp, nil, logger)
+	agentServer := grpcadapter.NewAgentServer(nodeApp, healthApp, scopeApp, logger)
 
 	omnimeshv1.RegisterControlPlaneServiceServer(grpcServer, controlServer)
 	omnimeshv1.RegisterAgentServiceServer(grpcServer, agentServer)

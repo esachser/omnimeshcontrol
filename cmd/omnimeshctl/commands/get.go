@@ -124,6 +124,10 @@ func mapKind(input string) string {
 		return "Service"
 	case "ns", "namespace", "namespaces":
 		return "Namespace"
+	case "target", "networktarget", "networktargets":
+		return "NetworkTarget"
+	case "route", "targetroute", "targetroutes":
+		return "TargetRoute"
 	default:
 		return input
 	}

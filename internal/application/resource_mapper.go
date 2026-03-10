@@ -133,3 +133,111 @@ func resourceToNamespace(r *model.Resource) (*model.Namespace, error) {
 
 	return ns, nil
 }
+
+// targetSpec is the JSON spec representation for NetworkTarget resources.
+type targetSpec struct {
+	GatewayAddress string `json:"gatewayAddress,omitempty"`
+}
+
+// targetToResource converts a domain NetworkTarget to a generic Resource.
+func targetToResource(t *model.NetworkTarget) *model.Resource {
+	spec := targetSpec{GatewayAddress: t.GatewayAddress}
+	specJSON, _ := json.Marshal(spec)
+
+	return &model.Resource{
+		APIVersion: "core.omnimesh.io/v1",
+		Kind:       "NetworkTarget",
+		Metadata: model.ResourceMetadata{
+			Name: t.Name,
+		},
+		Spec: specJSON,
+	}
+}
+
+// resourceToTarget converts a generic Resource back to a domain NetworkTarget.
+func resourceToTarget(r *model.Resource) (*model.NetworkTarget, error) {
+	if r.Kind != "NetworkTarget" {
+		return nil, fmt.Errorf("expected kind NetworkTarget, got %s", r.Kind)
+	}
+
+	var spec targetSpec
+	if len(r.Spec) > 0 {
+		if err := json.Unmarshal(r.Spec, &spec); err != nil {
+			return nil, fmt.Errorf("unmarshal target spec: %w", err)
+		}
+	}
+
+	t := &model.NetworkTarget{
+		Name:           r.Metadata.Name,
+		GatewayAddress: spec.GatewayAddress,
+	}
+
+	return t, nil
+}
+
+// failoverPolicySpec is the JSON representation for FailoverPolicy.
+type failoverPolicySpec struct {
+	ActiveWhenTargetIsDown string `json:"activeWhenTargetIsDown,omitempty"`
+}
+
+// routeSpec is the JSON spec representation for TargetRoute resources.
+type routeSpec struct {
+	TargetService     string              `json:"targetService,omitempty"`
+	DestinationTarget string              `json:"destinationTarget,omitempty"`
+	Weight            int                 `json:"weight,omitempty"`
+	Failover          *failoverPolicySpec `json:"failover,omitempty"`
+}
+
+// routeToResource converts a domain TargetRoute to a generic Resource.
+func routeToResource(rt *model.TargetRoute) *model.Resource {
+	spec := routeSpec{
+		TargetService:     rt.TargetService,
+		DestinationTarget: rt.DestinationTarget,
+		Weight:            rt.Weight,
+	}
+	if rt.Failover != nil {
+		spec.Failover = &failoverPolicySpec{
+			ActiveWhenTargetIsDown: rt.Failover.ActiveWhenTargetIsDown,
+		}
+	}
+	specJSON, _ := json.Marshal(spec)
+
+	return &model.Resource{
+		APIVersion: "traffic.omnimesh.io/v1",
+		Kind:       "TargetRoute",
+		Metadata: model.ResourceMetadata{
+			Name:      rt.Name,
+			Namespace: rt.Namespace,
+		},
+		Spec: specJSON,
+	}
+}
+
+// resourceToRoute converts a generic Resource back to a domain TargetRoute.
+func resourceToRoute(r *model.Resource) (*model.TargetRoute, error) {
+	if r.Kind != "TargetRoute" {
+		return nil, fmt.Errorf("expected kind TargetRoute, got %s", r.Kind)
+	}
+
+	var spec routeSpec
+	if len(r.Spec) > 0 {
+		if err := json.Unmarshal(r.Spec, &spec); err != nil {
+			return nil, fmt.Errorf("unmarshal route spec: %w", err)
+		}
+	}
+
+	rt := &model.TargetRoute{
+		Name:              r.Metadata.Name,
+		Namespace:         r.Metadata.Namespace,
+		TargetService:     spec.TargetService,
+		DestinationTarget: spec.DestinationTarget,
+		Weight:            spec.Weight,
+	}
+	if spec.Failover != nil {
+		rt.Failover = &model.FailoverPolicy{
+			ActiveWhenTargetIsDown: spec.Failover.ActiveWhenTargetIsDown,
+		}
+	}
+
+	return rt, nil
+}

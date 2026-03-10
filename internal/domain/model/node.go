@@ -60,6 +60,8 @@ type Node struct {
 	ID string
 	// Platform is the operating system of the node.
 	Platform NodePlatform
+	// Target is the NetworkTarget this node belongs to.
+	Target string
 	// Addr is the network address of the node's agent (used for HBONE tunneling).
 	Addr netip.AddrPort
 	// Status indicates the lifecycle state of the node.

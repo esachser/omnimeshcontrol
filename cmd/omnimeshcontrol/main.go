@@ -107,6 +107,9 @@ func run(logger *slog.Logger) error {
 	// EndpointHealthStore adapters are implemented.
 	healthApp := application.NewHealthAppService(nil, routeDistributor, logger)
 
+	targetApp := application.NewTargetAppService(resourceStore, logger)
+	routeApp := application.NewRouteAppService(resourceStore, logger)
+
 	// --- Start gRPC server ---
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
@@ -114,7 +117,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	grpcServer := grpc.NewServer()
-	controlServer := grpcadapter.NewControlPlaneServer(svcApp, nsApp, logger)
+	controlServer := grpcadapter.NewControlPlaneServer(svcApp, nsApp, targetApp, routeApp, logger)
 	agentServer := grpcadapter.NewAgentServer(nodeApp, healthApp, nil, logger)
 
 	omnimeshv1.RegisterControlPlaneServiceServer(grpcServer, controlServer)

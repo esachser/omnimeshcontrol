@@ -22,6 +22,7 @@ message AgentMessage {
     RegisterNodeRequest register_node = 1;
     HealthReport health_report = 2;
     DrainRequest drain_request = 3;
+    UpdateNodeServicesRequest update_node_services = 4;
   }
 }
 
@@ -40,6 +41,11 @@ message HealthReport {
   string endpoint_address = 3;
   EndpointHealthStatus status = 4;
   string probe_type = 5; // "TCP", "HTTP", "gRPC"
+}
+
+message UpdateNodeServicesRequest {
+  repeated string added_services = 1;   // ServiceIDs in "namespace/name" format
+  repeated string removed_services = 2; // ServiceIDs in "namespace/name" format
 }
 
 message DrainRequest {

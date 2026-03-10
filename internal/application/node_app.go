@@ -89,5 +89,44 @@ func (s *NodeAppService) OnStreamReconnect(_ context.Context, nodeID string) err
 	return nil
 }
 
+// UpdateNodeServices updates the list of services for a registered node.
+func (s *NodeAppService) UpdateNodeServices(ctx context.Context, nodeID string, added []model.ServiceID, removed []model.ServiceID) error {
+	node, err := s.state.GetNode(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("update node services: %w", err)
+	}
+	if node == nil {
+		return fmt.Errorf("update node services: %w: node %q not found", domain.ErrNodeNotFound, nodeID)
+	}
+
+	// Update services list
+	svcMap := make(map[model.ServiceID]bool)
+	for _, svc := range node.Services {
+		svcMap[svc] = true
+	}
+	for _, svc := range added {
+		svcMap[svc] = true
+	}
+	for _, svc := range removed {
+		delete(svcMap, svc)
+	}
+
+	node.Services = make([]model.ServiceID, 0, len(svcMap))
+	for svc := range svcMap {
+		node.Services = append(node.Services, svc)
+	}
+
+	if err := s.state.PersistNode(ctx, node.ID, node); err != nil {
+		return fmt.Errorf("update node services: %w", err)
+	}
+
+	s.logger.Info("node services updated",
+		"nodeID", node.ID,
+		"added", len(added),
+		"removed", len(removed),
+	)
+	return nil
+}
+
 // Compile-time interface check.
 var _ inbound.NodeRegistrar = (*NodeAppService)(nil)

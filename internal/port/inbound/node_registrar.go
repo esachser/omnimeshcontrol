@@ -23,4 +23,6 @@ type NodeRegistrar interface {
 	// OnStreamReconnect is called when an agent reconnects within the grace period.
 	// Cancels the grace period timer and resumes the node.
 	OnStreamReconnect(ctx context.Context, nodeID string) error
+	// UpdateNodeServices updates the services running on the node.
+	UpdateNodeServices(ctx context.Context, nodeID string, added []model.ServiceID, removed []model.ServiceID) error
 }

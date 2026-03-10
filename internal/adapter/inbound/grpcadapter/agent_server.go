@@ -11,6 +11,8 @@ import (
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"sync"
+	"fmt"
 )
 
 // AgentServer implements the AgentService gRPC server.
@@ -21,6 +23,9 @@ type AgentServer struct {
 	healthReporter inbound.ServiceHealthReporter
 	scopeManager   inbound.AgentScopeManager
 	logger         *slog.Logger
+
+	mu            sync.RWMutex
+	activeStreams map[string]omnimeshv1.AgentService_AgentStreamServer
 }
 
 // NewAgentServer creates a new AgentServer.
@@ -38,6 +43,7 @@ func NewAgentServer(
 		healthReporter: healthReporter,
 		scopeManager:   scopeManager,
 		logger:         logger,
+		activeStreams:  make(map[string]omnimeshv1.AgentService_AgentStreamServer),
 	}
 }
 
@@ -61,6 +67,10 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 	nodeID := reg.NodeId
 	s.logger.Info("agent stream opened", "nodeID", nodeID, "addr", reg.Addr)
 
+	s.mu.Lock()
+	s.activeStreams[nodeID] = stream
+	s.mu.Unlock()
+
 	// Parse address.
 	addr, _ := netip.ParseAddrPort(reg.Addr)
 
@@ -80,6 +90,10 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 
 	// On stream close (normal or error), handle disconnect.
 	defer func() {
+		s.mu.Lock()
+		delete(s.activeStreams, nodeID)
+		s.mu.Unlock()
+
 		s.nodeRegistrar.OnStreamDisconnect(ctx, nodeID)
 		s.logger.Info("agent stream closed", "nodeID", nodeID)
 	}()
@@ -112,6 +126,8 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 			s.handleHealthReport(ctx, payload.HealthReport, nodeID)
 		case *omnimeshv1.AgentMessage_DrainRequest:
 			s.handleDrainRequest(ctx, payload.DrainRequest)
+		case *omnimeshv1.AgentMessage_UpdateNodeServices:
+			s.handleUpdateNodeServices(ctx, payload.UpdateNodeServices, nodeID)
 		default:
 			s.logger.Warn("unknown agent message type", "nodeID", nodeID)
 		}
@@ -138,6 +154,32 @@ func (s *AgentServer) handleDrainRequest(ctx context.Context, drain *omnimeshv1.
 	svcID := model.ServiceID{Namespace: drain.ServiceNamespace, Name: drain.ServiceName}
 	if err := s.healthReporter.DrainService(ctx, svcID, drain.EndpointAddress); err != nil {
 		s.logger.Warn("failed to process drain request", "service", svcID, "error", err)
+	}
+}
+
+func (s *AgentServer) handleUpdateNodeServices(ctx context.Context, req *omnimeshv1.UpdateNodeServicesRequest, nodeID string) {
+	var added, removed []model.ServiceID
+	
+	for _, raw := range req.AddedServices {
+		svcID, err := model.ParseServiceID(raw)
+		if err != nil {
+			s.logger.Warn("invalid service ID in AddedServices", "raw", raw, "error", err)
+			continue
+		}
+		added = append(added, svcID)
+	}
+
+	for _, raw := range req.RemovedServices {
+		svcID, err := model.ParseServiceID(raw)
+		if err != nil {
+			s.logger.Warn("invalid service ID in RemovedServices", "raw", raw, "error", err)
+			continue
+		}
+		removed = append(removed, svcID)
+	}
+
+	if err := s.nodeRegistrar.UpdateNodeServices(ctx, nodeID, added, removed); err != nil {
+		s.logger.Warn("failed to process update node services", "nodeID", nodeID, "error", err)
 	}
 }
 
@@ -216,4 +258,76 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 	}
 
 	return snapshot
+}
+
+// PushUpdate pushes a differential scope update to a specific agent node.
+func (s *AgentServer) PushUpdate(ctx context.Context, nodeID string, update model.ScopeUpdate) error {
+	s.mu.RLock()
+	stream, ok := s.activeStreams[nodeID]
+	s.mu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("active stream not found for node %q", nodeID)
+	}
+
+	protoUpdate := scopeUpdateToProto(update)
+
+	if err := stream.Send(&omnimeshv1.ControlMessage{
+		Payload: &omnimeshv1.ControlMessage_ScopeUpdate{ScopeUpdate: protoUpdate},
+	}); err != nil {
+		return fmt.Errorf("send scope update: %w", err)
+	}
+
+	return nil
+}
+
+func scopeUpdateTypeToProto(t model.ScopeUpdateType) omnimeshv1.ScopeUpdateType {
+	switch t {
+	case model.ScopeUpdateModify:
+		return omnimeshv1.ScopeUpdateType_SCOPE_UPDATE_TYPE_MODIFY
+	case model.ScopeUpdateRemove:
+		return omnimeshv1.ScopeUpdateType_SCOPE_UPDATE_TYPE_REMOVE
+	default:
+		return omnimeshv1.ScopeUpdateType_SCOPE_UPDATE_TYPE_ADD
+	}
+}
+
+func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
+	protoUpdate := &omnimeshv1.ScopeUpdate{
+		Type: scopeUpdateTypeToProto(update.Type),
+	}
+
+	for _, svc := range update.Services {
+		info := &omnimeshv1.ServiceInfo{
+			Namespace: svc.ID.Namespace,
+			Name:      svc.ID.Name,
+			Protocol:  svc.Protocol.String(),
+			Port:      int32(svc.Port),
+		}
+		if svc.MeshAddr.IsValid() {
+			info.MeshAddr = svc.MeshAddr.String()
+		}
+		protoUpdate.Services = append(protoUpdate.Services, info)
+	}
+
+	for _, route := range update.Routes {
+		ri := &omnimeshv1.RouteInfo{
+			ServiceNamespace: route.ServiceID.Namespace,
+			ServiceName:      route.ServiceID.Name,
+		}
+		if route.MeshAddr.IsValid() {
+			ri.MeshAddr = route.MeshAddr.String()
+		}
+		for _, node := range route.TargetNodes {
+			ri.TargetNodes = append(ri.TargetNodes, &omnimeshv1.NodeEndpointInfo{
+				NodeId: node.NodeID,
+				Addr:   node.Addr.String(),
+				Target: node.Target,
+				Labels: node.Labels,
+			})
+		}
+		protoUpdate.Routes = append(protoUpdate.Routes, ri)
+	}
+
+	return protoUpdate
 }

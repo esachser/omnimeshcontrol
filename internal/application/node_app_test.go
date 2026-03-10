@@ -76,3 +76,55 @@ func TestNodeAppService_StreamDisconnectAndReconnect(t *testing.T) {
 		t.Error("expected node-2 to be alive after reconnect")
 	}
 }
+
+func TestNodeAppService_UpdateNodeServices(t *testing.T) {
+	state := newMockStateStore()
+	tracker := newMockNodeTracker()
+	app := NewNodeAppService(state, tracker, nil)
+	ctx := context.Background()
+
+	node := &model.Node{
+		ID:       "node-3",
+		Platform: model.NodePlatformLinux,
+	}
+	app.RegisterNode(ctx, node)
+
+	svc1 := model.ServiceID{Namespace: "default", Name: "svc1"}
+	svc2 := model.ServiceID{Namespace: "default", Name: "svc2"}
+	svc3 := model.ServiceID{Namespace: "default", Name: "svc3"}
+
+	// Initial add
+	err := app.UpdateNodeServices(ctx, "node-3", []model.ServiceID{svc1, svc2}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updatedNode, _ := state.GetNode(ctx, "node-3")
+	if len(updatedNode.Services) != 2 {
+		t.Errorf("expected 2 services, got %d", len(updatedNode.Services))
+	}
+
+	// Add svc3, remove svc1
+	err = app.UpdateNodeServices(ctx, "node-3", []model.ServiceID{svc3}, []model.ServiceID{svc1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	updatedNode, _ = state.GetNode(ctx, "node-3")
+	if len(updatedNode.Services) != 2 {
+		t.Errorf("expected 2 services, got %d", len(updatedNode.Services))
+	}
+
+	foundSvc2, foundSvc3 := false, false
+	for _, s := range updatedNode.Services {
+		if s == svc2 {
+			foundSvc2 = true
+		}
+		if s == svc3 {
+			foundSvc3 = true
+		}
+	}
+	if !foundSvc2 || !foundSvc3 {
+		t.Errorf("expected services to contain svc2 and svc3, got %v", updatedNode.Services)
+	}
+}

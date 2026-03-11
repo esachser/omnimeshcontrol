@@ -114,7 +114,7 @@ func (s *EtcdResourceStore) Delete(ctx context.Context, key string) error {
 
 // Watch returns a channel of events for resources under the given prefix.
 func (s *EtcdResourceStore) Watch(ctx context.Context, prefix string) (<-chan outbound.ResourceEvent, error) {
-	watchCh := s.client.Watch(ctx, s.fullKey(prefix), clientv3.WithPrefix())
+	watchCh := s.client.Watch(ctx, s.fullKey(prefix), clientv3.WithPrefix(), clientv3.WithPrevKV())
 
 	eventCh := make(chan outbound.ResourceEvent, 64)
 	go func() {
@@ -135,6 +135,17 @@ func (s *EtcdResourceStore) Watch(ctx context.Context, prefix string) (<-chan ou
 					}
 				case clientv3.EventTypeDelete:
 					event.Type = outbound.ResourceEventDelete
+					kv := ev.PrevKv
+					if kv == nil {
+						kv = ev.Kv
+					}
+					if kv != nil && len(kv.Value) > 0 {
+						var resource model.Resource
+						if err := json.Unmarshal(kv.Value, &resource); err == nil {
+							resource.Metadata.Revision = kv.ModRevision
+							event.Resource = &resource
+						}
+					}
 				}
 
 				select {

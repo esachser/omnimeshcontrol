@@ -5,10 +5,13 @@ package grpcadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	omnimeshv1 "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1"
+	"github.com/esachser/omnimeshcontrol/internal/codec"
+	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
 	"google.golang.org/grpc/codes"
@@ -22,6 +25,7 @@ type ControlPlaneServer struct {
 	namespaces inbound.NamespaceManager
 	targets    inbound.TargetManager
 	routes     inbound.RouteManager
+	policies   inbound.TrafficPolicyManager
 	logger     *slog.Logger
 }
 
@@ -31,6 +35,7 @@ func NewControlPlaneServer(
 	namespaces inbound.NamespaceManager,
 	targets inbound.TargetManager,
 	routes inbound.RouteManager,
+	policies inbound.TrafficPolicyManager,
 	logger *slog.Logger,
 ) *ControlPlaneServer {
 	if logger == nil {
@@ -41,6 +46,7 @@ func NewControlPlaneServer(
 		namespaces: namespaces,
 		targets:    targets,
 		routes:     routes,
+		policies:   policies,
 		logger:     logger,
 	}
 }
@@ -61,6 +67,8 @@ func (s *ControlPlaneServer) ApplyResource(ctx context.Context, req *omnimeshv1.
 		return s.applyNetworkTarget(ctx, r)
 	case "TargetRoute":
 		return s.applyTargetRoute(ctx, r)
+	case "TrafficPolicy":
+		return s.applyTrafficPolicy(ctx, r)
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported resource kind: %s", r.Kind)
 	}
@@ -197,6 +205,46 @@ func (s *ControlPlaneServer) applyTargetRoute(ctx context.Context, r *omnimeshv1
 	}, nil
 }
 
+func (s *ControlPlaneServer) applyTrafficPolicy(ctx context.Context, r *omnimeshv1.Resource) (*omnimeshv1.ApplyResourceResponse, error) {
+	if r.Metadata == nil {
+		return nil, status.Error(codes.InvalidArgument, "metadata is required")
+	}
+
+	resource := &model.Resource{
+		APIVersion: r.ApiVersion,
+		Kind:       r.Kind,
+		Metadata: model.ResourceMetadata{
+			Name:      r.Metadata.Name,
+			Namespace: r.Metadata.Namespace,
+			Labels:    r.Metadata.Labels,
+		},
+		Spec: r.Spec,
+	}
+
+	policy, err := codec.ResourceToTrafficPolicy(resource)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid traffic policy: %v", err)
+	}
+
+	_, getErr := s.policies.GetTrafficPolicy(ctx, policy.Namespace, policy.Name)
+	if getErr != nil {
+		if !errors.Is(getErr, domain.ErrPolicyNotFound) {
+			return nil, status.Errorf(codes.Internal, "get traffic policy: %v", getErr)
+		}
+		if err := s.policies.CreateTrafficPolicy(ctx, policy); err != nil {
+			return nil, status.Errorf(codes.Internal, "create traffic policy: %v", err)
+		}
+	} else {
+		if err := s.policies.UpdateTrafficPolicy(ctx, policy); err != nil {
+			return nil, status.Errorf(codes.Internal, "update traffic policy: %v", err)
+		}
+	}
+
+	return &omnimeshv1.ApplyResourceResponse{
+		Resource: trafficPolicyResourceToProto(policy),
+	}, nil
+}
+
 // GetResource retrieves a resource by kind/namespace/name.
 func (s *ControlPlaneServer) GetResource(ctx context.Context, req *omnimeshv1.GetResourceRequest) (*omnimeshv1.GetResourceResponse, error) {
 	switch req.Kind {
@@ -227,6 +275,12 @@ func (s *ControlPlaneServer) GetResource(ctx context.Context, req *omnimeshv1.Ge
 			return nil, status.Errorf(codes.NotFound, "%v", err)
 		}
 		return &omnimeshv1.GetResourceResponse{Resource: targetRouteToProto(route)}, nil
+	case "TrafficPolicy":
+		policy, err := s.policies.GetTrafficPolicy(ctx, req.Namespace, req.Name)
+		if err != nil {
+			return nil, status.Errorf(codes.NotFound, "%v", err)
+		}
+		return &omnimeshv1.GetResourceResponse{Resource: trafficPolicyResourceToProto(policy)}, nil
 
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported kind: %s", req.Kind)
@@ -279,6 +333,16 @@ func (s *ControlPlaneServer) ListResources(ctx context.Context, req *omnimeshv1.
 			protos = append(protos, targetRouteToProto(rt))
 		}
 		return &omnimeshv1.ListResourcesResponse{Resources: protos}, nil
+	case "TrafficPolicy":
+		policies, err := s.policies.ListTrafficPolicies(ctx, req.Namespace)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		var protos []*omnimeshv1.Resource
+		for _, policy := range policies {
+			protos = append(protos, trafficPolicyResourceToProto(policy))
+		}
+		return &omnimeshv1.ListResourcesResponse{Resources: protos}, nil
 
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported kind: %s", req.Kind)
@@ -308,6 +372,11 @@ func (s *ControlPlaneServer) DeleteResource(ctx context.Context, req *omnimeshv1
 
 	case "TargetRoute":
 		if err := s.routes.Delete(ctx, req.Namespace, req.Name); err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		return &omnimeshv1.DeleteResourceResponse{}, nil
+	case "TrafficPolicy":
+		if err := s.policies.DeleteTrafficPolicy(ctx, req.Namespace, req.Name); err != nil {
 			return nil, status.Errorf(codes.Internal, "%v", err)
 		}
 		return &omnimeshv1.DeleteResourceResponse{}, nil
@@ -393,6 +462,20 @@ func targetRouteToProto(rt *model.TargetRoute) *omnimeshv1.Resource {
 		Metadata: &omnimeshv1.ResourceMetadata{
 			Name:      rt.Name,
 			Namespace: rt.Namespace,
+		},
+		Spec: specJSON,
+	}
+}
+
+func trafficPolicyResourceToProto(policy *model.TrafficPolicy) *omnimeshv1.Resource {
+	specJSON, _ := codec.EncodeTrafficPolicySpec(policy)
+
+	return &omnimeshv1.Resource{
+		ApiVersion: "traffic.omnimesh.io/v1",
+		Kind:       "TrafficPolicy",
+		Metadata: &omnimeshv1.ResourceMetadata{
+			Name:      policy.Name,
+			Namespace: policy.Namespace,
 		},
 		Spec: specJSON,
 	}

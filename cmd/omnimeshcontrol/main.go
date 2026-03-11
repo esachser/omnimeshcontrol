@@ -20,6 +20,7 @@ import (
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/etcdstore"
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/routedist"
 	"github.com/esachser/omnimeshcontrol/internal/application"
+	domainservice "github.com/esachser/omnimeshcontrol/internal/domain/service"
 	"google.golang.org/grpc"
 )
 
@@ -72,6 +73,9 @@ func run(logger *slog.Logger) error {
 
 	dnsManager := etcddns.NewEtcdDNSRecordManager(embedded.Client(), dnsZone)
 	routeDistributor := routedist.NewGRPCRouteDistributor(logger)
+	policyStore := etcdstore.NewEtcdTrafficPolicyStore(resourceStore)
+	healthStore := etcdstore.NewEtcdEndpointHealthStore(embedded.Client())
+	depStore := etcdstore.NewEtcdDependencyStore(embedded.Client())
 
 	// --- Parse default CIDR (used for namespaces that don't specify one) ---
 	defaultCIDR, err := netip.ParsePrefix(meshCIDR)
@@ -102,19 +106,19 @@ func run(logger *slog.Logger) error {
 
 	nodeApp := application.NewNodeAppService(stateStore, nodeTracker, logger)
 
-	// Health and scope services — using nil stores for now (Phase 4 MVP).
-	// Full wiring will come when the etcd-backed TrafficPolicyStore and
-	// EndpointHealthStore adapters are implemented.
-	healthApp := application.NewHealthAppService(nil, stateStore, routeDistributor, logger)
+	validator := domainservice.NewPolicyValidator()
+	policyApp := application.NewTrafficPolicyAppService(policyStore, resourceStore, validator, logger)
+
+	healthApp := application.NewHealthAppService(healthStore, stateStore, routeDistributor, logger)
 
 	targetApp := application.NewTargetAppService(resourceStore, logger)
 	scopeApp := application.NewAgentScopeAppService(
 		resourceStore,
 		stateStore,
-		nil, // policyStore
-		nil, // healthStore
-		nil, // depStore
-		nil, // TODO: route distributor
+		policyStore,
+		healthStore,
+		depStore,
+		routeDistributor,
 		targetApp,
 		logger.WithGroup("scope_app"),
 	)
@@ -127,8 +131,15 @@ func run(logger *slog.Logger) error {
 	}
 
 	grpcServer := grpc.NewServer()
-	controlServer := grpcadapter.NewControlPlaneServer(svcApp, nsApp, targetApp, routeApp, logger)
+	controlServer := grpcadapter.NewControlPlaneServer(svcApp, nsApp, targetApp, routeApp, policyApp, logger)
 	agentServer := grpcadapter.NewAgentServer(nodeApp, healthApp, scopeApp, logger)
+
+	policyUpdates := application.NewTrafficPolicyUpdateService(policyStore, agentServer, logger.WithGroup("policy_updates"))
+	go func() {
+		if err := policyUpdates.Run(ctx); err != nil {
+			logger.Warn("traffic policy updates stopped", "error", err)
+		}
+	}()
 
 	omnimeshv1.RegisterControlPlaneServiceServer(grpcServer, controlServer)
 	omnimeshv1.RegisterAgentServiceServer(grpcServer, agentServer)

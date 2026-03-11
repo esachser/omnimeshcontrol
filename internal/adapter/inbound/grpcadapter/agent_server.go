@@ -2,17 +2,20 @@ package grpcadapter
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/netip"
+	"sync"
 
 	omnimeshv1 "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1"
+	"github.com/esachser/omnimeshcontrol/internal/codec"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
+	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"sync"
-	"fmt"
 )
 
 // AgentServer implements the AgentService gRPC server.
@@ -159,7 +162,7 @@ func (s *AgentServer) handleDrainRequest(ctx context.Context, drain *omnimeshv1.
 
 func (s *AgentServer) handleUpdateNodeServices(ctx context.Context, req *omnimeshv1.UpdateNodeServicesRequest, nodeID string) {
 	var added, removed []model.ServiceID
-	
+
 	for _, raw := range req.AddedServices {
 		svcID, err := model.ParseServiceID(raw)
 		if err != nil {
@@ -257,6 +260,10 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 		snapshot.Routes = append(snapshot.Routes, ri)
 	}
 
+	for _, policy := range scope.TrafficPolicies {
+		snapshot.TrafficPolicies = append(snapshot.TrafficPolicies, trafficPolicyToProto(policy))
+	}
+
 	return snapshot
 }
 
@@ -329,5 +336,51 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 		protoUpdate.Routes = append(protoUpdate.Routes, ri)
 	}
 
+	for _, policy := range update.TrafficPolicies {
+		protoUpdate.TrafficPolicies = append(protoUpdate.TrafficPolicies, trafficPolicyToProto(policy))
+	}
+
 	return protoUpdate
 }
+
+func trafficPolicyToProto(policy model.TrafficPolicy) *omnimeshv1.TrafficPolicyInfo {
+	specJSON, _ := codec.EncodeTrafficPolicySpec(&policy)
+
+	return &omnimeshv1.TrafficPolicyInfo{
+		Name:                   policy.Name,
+		Namespace:              policy.Namespace,
+		TargetServiceNamespace: policy.TargetService.Namespace,
+		TargetServiceName:      policy.TargetService.Name,
+		Spec:                   specJSON,
+	}
+}
+
+// BroadcastUpdate pushes a differential scope update to all active agents.
+func (s *AgentServer) BroadcastUpdate(ctx context.Context, update model.ScopeUpdate) error {
+	s.mu.RLock()
+	streams := make(map[string]omnimeshv1.AgentService_AgentStreamServer, len(s.activeStreams))
+	for nodeID, stream := range s.activeStreams {
+		streams[nodeID] = stream
+	}
+	s.mu.RUnlock()
+
+	protoUpdate := scopeUpdateToProto(update)
+
+	var errs []error
+	for nodeID, stream := range streams {
+		if err := stream.Send(&omnimeshv1.ControlMessage{
+			Payload: &omnimeshv1.ControlMessage_ScopeUpdate{ScopeUpdate: protoUpdate},
+		}); err != nil {
+			errs = append(errs, fmt.Errorf("node %s: %w", nodeID, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("broadcast scope update: %w", errors.Join(errs...))
+	}
+
+	return nil
+}
+
+// Compile-time interface checks.
+var _ outbound.ScopeDistributor = (*AgentServer)(nil)

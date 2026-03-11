@@ -136,7 +136,13 @@ func (m *mockStateStore) GetIPAllocation(_ context.Context, id model.ServiceID) 
 }
 
 func (m *mockStateStore) GetNode(_ context.Context, nodeID string) (*model.Node, error) {
-	return nil, domain.ErrNodeNotFound
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	node, ok := m.nodes[nodeID]
+	if !ok {
+		return nil, domain.ErrNodeNotFound
+	}
+	return node, nil
 }
 
 func (m *mockStateStore) PersistNode(_ context.Context, nodeID string, node *model.Node) error {

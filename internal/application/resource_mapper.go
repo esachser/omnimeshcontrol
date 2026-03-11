@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 
+	"github.com/esachser/omnimeshcontrol/internal/codec"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 )
 
@@ -254,75 +255,12 @@ type trafficRouteSpec struct {
 	Weight      int                         `json:"weight,omitempty"`
 }
 
-// trafficPolicySpec is the JSON representation for TrafficPolicy.
-type trafficPolicySpec struct {
-	TargetService string             `json:"targetService,omitempty"`
-	Routes        []trafficRouteSpec `json:"routes,omitempty"`
-	// Additional policy fields (retry, circuitbreaker) would be added here later
-}
-
 // trafficPolicyToResource converts a domain TrafficPolicy to a generic Resource.
-func trafficPolicyToResource(tp *model.TrafficPolicy) *model.Resource {
-	spec := trafficPolicySpec{
-		TargetService: tp.TargetService.String(),
-	}
-
-	for _, route := range tp.Routes {
-		spec.Routes = append(spec.Routes, trafficRouteSpec{
-			Destination: trafficRouteDestinationSpec{
-				Target: route.Destination.Target,
-				Labels: route.Destination.Labels,
-			},
-			Weight: route.Weight,
-		})
-	}
-
-	specJSON, _ := json.Marshal(spec)
-
-	return &model.Resource{
-		APIVersion: "traffic.omnimesh.io/v1",
-		Kind:       "TrafficPolicy",
-		Metadata: model.ResourceMetadata{
-			Name:      tp.Name,
-			Namespace: tp.Namespace,
-		},
-		Spec: specJSON,
-	}
+func trafficPolicyToResource(tp *model.TrafficPolicy) (*model.Resource, error) {
+	return codec.TrafficPolicyToResource(tp)
 }
 
 // resourceToTrafficPolicy converts a generic Resource back to a domain TrafficPolicy.
 func resourceToTrafficPolicy(r *model.Resource) (*model.TrafficPolicy, error) {
-	if r.Kind != "TrafficPolicy" {
-		return nil, fmt.Errorf("expected kind TrafficPolicy, got %s", r.Kind)
-	}
-
-	var spec trafficPolicySpec
-	if len(r.Spec) > 0 {
-		if err := json.Unmarshal(r.Spec, &spec); err != nil {
-			return nil, fmt.Errorf("unmarshal traffic policy spec: %w", err)
-		}
-	}
-
-	svcID, err := model.ParseServiceID(spec.TargetService)
-	if err != nil {
-		return nil, fmt.Errorf("invalid targetService: %w", err)
-	}
-
-	tp := &model.TrafficPolicy{
-		Name:          r.Metadata.Name,
-		Namespace:     r.Metadata.Namespace,
-		TargetService: svcID,
-	}
-
-	for _, routeSpec := range spec.Routes {
-		tp.Routes = append(tp.Routes, model.TrafficRoute{
-			Destination: model.TrafficRouteDestination{
-				Target: routeSpec.Destination.Target,
-				Labels: routeSpec.Destination.Labels,
-			},
-			Weight: routeSpec.Weight,
-		})
-	}
-
-	return tp, nil
+	return codec.ResourceToTrafficPolicy(r)
 }

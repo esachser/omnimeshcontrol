@@ -107,8 +107,8 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 		s.logger.Warn("failed to get agent scope", "nodeID", nodeID, "error", err)
 	} else {
 		snapshot := scopeToProto(scope)
-		if err := stream.Send(&omnimeshv1.ControlMessage{
-			Payload: &omnimeshv1.ControlMessage_ScopeSnapshot{ScopeSnapshot: snapshot},
+		if err := stream.Send(&omnimeshv1.AgentStreamResponse{
+			Payload: &omnimeshv1.AgentStreamResponse_ScopeSnapshot{ScopeSnapshot: snapshot},
 		}); err != nil {
 			return status.Errorf(codes.Internal, "send scope snapshot: %v", err)
 		}
@@ -125,11 +125,11 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 		}
 
 		switch payload := msg.Payload.(type) {
-		case *omnimeshv1.AgentMessage_HealthReport:
+		case *omnimeshv1.AgentStreamRequest_HealthReport:
 			s.handleHealthReport(ctx, payload.HealthReport, nodeID)
-		case *omnimeshv1.AgentMessage_DrainRequest:
+		case *omnimeshv1.AgentStreamRequest_DrainRequest:
 			s.handleDrainRequest(ctx, payload.DrainRequest)
-		case *omnimeshv1.AgentMessage_UpdateNodeServices:
+		case *omnimeshv1.AgentStreamRequest_UpdateNodeServices:
 			s.handleUpdateNodeServices(ctx, payload.UpdateNodeServices, nodeID)
 		default:
 			s.logger.Warn("unknown agent message type", "nodeID", nodeID)
@@ -279,8 +279,8 @@ func (s *AgentServer) PushUpdate(ctx context.Context, nodeID string, update mode
 
 	protoUpdate := scopeUpdateToProto(update)
 
-	if err := stream.Send(&omnimeshv1.ControlMessage{
-		Payload: &omnimeshv1.ControlMessage_ScopeUpdate{ScopeUpdate: protoUpdate},
+	if err := stream.Send(&omnimeshv1.AgentStreamResponse{
+		Payload: &omnimeshv1.AgentStreamResponse_ScopeUpdate{ScopeUpdate: protoUpdate},
 	}); err != nil {
 		return fmt.Errorf("send scope update: %w", err)
 	}
@@ -368,8 +368,8 @@ func (s *AgentServer) BroadcastUpdate(ctx context.Context, update model.ScopeUpd
 
 	var errs []error
 	for nodeID, stream := range streams {
-		if err := stream.Send(&omnimeshv1.ControlMessage{
-			Payload: &omnimeshv1.ControlMessage_ScopeUpdate{ScopeUpdate: protoUpdate},
+		if err := stream.Send(&omnimeshv1.AgentStreamResponse{
+			Payload: &omnimeshv1.AgentStreamResponse_ScopeUpdate{ScopeUpdate: protoUpdate},
 		}); err != nil {
 			errs = append(errs, fmt.Errorf("node %s: %w", nodeID, err))
 		}

@@ -29,7 +29,7 @@ type AgentServiceClient interface {
 	// AgentStream is the persistent bidirectional stream.
 	// Agent sends: registration, health reports, drain requests.
 	// Control plane sends: scope snapshots, scope updates, route updates.
-	AgentStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentMessage, ControlMessage], error)
+	AgentStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentStreamRequest, AgentStreamResponse], error)
 }
 
 type agentServiceClient struct {
@@ -40,18 +40,18 @@ func NewAgentServiceClient(cc grpc.ClientConnInterface) AgentServiceClient {
 	return &agentServiceClient{cc}
 }
 
-func (c *agentServiceClient) AgentStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentMessage, ControlMessage], error) {
+func (c *agentServiceClient) AgentStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentStreamRequest, AgentStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[0], AgentService_AgentStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[AgentMessage, ControlMessage]{ClientStream: stream}
+	x := &grpc.GenericClientStream[AgentStreamRequest, AgentStreamResponse]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type AgentService_AgentStreamClient = grpc.BidiStreamingClient[AgentMessage, ControlMessage]
+type AgentService_AgentStreamClient = grpc.BidiStreamingClient[AgentStreamRequest, AgentStreamResponse]
 
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
@@ -60,7 +60,7 @@ type AgentServiceServer interface {
 	// AgentStream is the persistent bidirectional stream.
 	// Agent sends: registration, health reports, drain requests.
 	// Control plane sends: scope snapshots, scope updates, route updates.
-	AgentStream(grpc.BidiStreamingServer[AgentMessage, ControlMessage]) error
+	AgentStream(grpc.BidiStreamingServer[AgentStreamRequest, AgentStreamResponse]) error
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -71,7 +71,7 @@ type AgentServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAgentServiceServer struct{}
 
-func (UnimplementedAgentServiceServer) AgentStream(grpc.BidiStreamingServer[AgentMessage, ControlMessage]) error {
+func (UnimplementedAgentServiceServer) AgentStream(grpc.BidiStreamingServer[AgentStreamRequest, AgentStreamResponse]) error {
 	return status.Error(codes.Unimplemented, "method AgentStream not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
@@ -96,11 +96,11 @@ func RegisterAgentServiceServer(s grpc.ServiceRegistrar, srv AgentServiceServer)
 }
 
 func _AgentService_AgentStream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(AgentServiceServer).AgentStream(&grpc.GenericServerStream[AgentMessage, ControlMessage]{ServerStream: stream})
+	return srv.(AgentServiceServer).AgentStream(&grpc.GenericServerStream[AgentStreamRequest, AgentStreamResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type AgentService_AgentStreamServer = grpc.BidiStreamingServer[AgentMessage, ControlMessage]
+type AgentService_AgentStreamServer = grpc.BidiStreamingServer[AgentStreamRequest, AgentStreamResponse]
 
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,

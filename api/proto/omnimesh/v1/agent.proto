@@ -12,12 +12,12 @@ service AgentService {
   // AgentStream is the persistent bidirectional stream.
   // Agent sends: registration, health reports, drain requests.
   // Control plane sends: scope snapshots, scope updates, route updates.
-  rpc AgentStream(stream AgentMessage) returns (stream ControlMessage);
+  rpc AgentStream(stream AgentStreamRequest) returns (stream AgentStreamResponse);
 }
 
 // --- Agent → Control Plane Messages ---
 
-message AgentMessage {
+message AgentStreamRequest {
   oneof payload {
     RegisterNodeRequest register_node = 1;
     HealthReport health_report = 2;
@@ -55,7 +55,7 @@ message DrainRequest {
 }
 
 enum EndpointHealthStatus {
-  ENDPOINT_HEALTH_STATUS_UNKNOWN = 0;
+  ENDPOINT_HEALTH_STATUS_UNSPECIFIED = 0;
   ENDPOINT_HEALTH_STATUS_HEALTHY = 1;
   ENDPOINT_HEALTH_STATUS_UNHEALTHY = 2;
   ENDPOINT_HEALTH_STATUS_DRAINING = 3;
@@ -63,7 +63,7 @@ enum EndpointHealthStatus {
 
 // --- Control Plane → Agent Messages ---
 
-message ControlMessage {
+message AgentStreamResponse {
   oneof payload {
     ScopeSnapshot scope_snapshot = 1;
     ScopeUpdate scope_update = 2;
@@ -86,9 +86,10 @@ message ScopeUpdate {
 }
 
 enum ScopeUpdateType {
-  SCOPE_UPDATE_TYPE_ADD = 0;
-  SCOPE_UPDATE_TYPE_MODIFY = 1;
-  SCOPE_UPDATE_TYPE_REMOVE = 2;
+  SCOPE_UPDATE_TYPE_UNSPECIFIED = 0;
+  SCOPE_UPDATE_TYPE_ADD = 1;
+  SCOPE_UPDATE_TYPE_MODIFY = 2;
+  SCOPE_UPDATE_TYPE_REMOVE = 3;
 }
 
 message RouteUpdate {

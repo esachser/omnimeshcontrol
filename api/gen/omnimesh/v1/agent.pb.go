@@ -24,25 +24,25 @@ const (
 type EndpointHealthStatus int32
 
 const (
-	EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNKNOWN   EndpointHealthStatus = 0
-	EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_HEALTHY   EndpointHealthStatus = 1
-	EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNHEALTHY EndpointHealthStatus = 2
-	EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_DRAINING  EndpointHealthStatus = 3
+	EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNSPECIFIED EndpointHealthStatus = 0
+	EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_HEALTHY     EndpointHealthStatus = 1
+	EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNHEALTHY   EndpointHealthStatus = 2
+	EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_DRAINING    EndpointHealthStatus = 3
 )
 
 // Enum value maps for EndpointHealthStatus.
 var (
 	EndpointHealthStatus_name = map[int32]string{
-		0: "ENDPOINT_HEALTH_STATUS_UNKNOWN",
+		0: "ENDPOINT_HEALTH_STATUS_UNSPECIFIED",
 		1: "ENDPOINT_HEALTH_STATUS_HEALTHY",
 		2: "ENDPOINT_HEALTH_STATUS_UNHEALTHY",
 		3: "ENDPOINT_HEALTH_STATUS_DRAINING",
 	}
 	EndpointHealthStatus_value = map[string]int32{
-		"ENDPOINT_HEALTH_STATUS_UNKNOWN":   0,
-		"ENDPOINT_HEALTH_STATUS_HEALTHY":   1,
-		"ENDPOINT_HEALTH_STATUS_UNHEALTHY": 2,
-		"ENDPOINT_HEALTH_STATUS_DRAINING":  3,
+		"ENDPOINT_HEALTH_STATUS_UNSPECIFIED": 0,
+		"ENDPOINT_HEALTH_STATUS_HEALTHY":     1,
+		"ENDPOINT_HEALTH_STATUS_UNHEALTHY":   2,
+		"ENDPOINT_HEALTH_STATUS_DRAINING":    3,
 	}
 )
 
@@ -76,22 +76,25 @@ func (EndpointHealthStatus) EnumDescriptor() ([]byte, []int) {
 type ScopeUpdateType int32
 
 const (
-	ScopeUpdateType_SCOPE_UPDATE_TYPE_ADD    ScopeUpdateType = 0
-	ScopeUpdateType_SCOPE_UPDATE_TYPE_MODIFY ScopeUpdateType = 1
-	ScopeUpdateType_SCOPE_UPDATE_TYPE_REMOVE ScopeUpdateType = 2
+	ScopeUpdateType_SCOPE_UPDATE_TYPE_UNSPECIFIED ScopeUpdateType = 0
+	ScopeUpdateType_SCOPE_UPDATE_TYPE_ADD         ScopeUpdateType = 1
+	ScopeUpdateType_SCOPE_UPDATE_TYPE_MODIFY      ScopeUpdateType = 2
+	ScopeUpdateType_SCOPE_UPDATE_TYPE_REMOVE      ScopeUpdateType = 3
 )
 
 // Enum value maps for ScopeUpdateType.
 var (
 	ScopeUpdateType_name = map[int32]string{
-		0: "SCOPE_UPDATE_TYPE_ADD",
-		1: "SCOPE_UPDATE_TYPE_MODIFY",
-		2: "SCOPE_UPDATE_TYPE_REMOVE",
+		0: "SCOPE_UPDATE_TYPE_UNSPECIFIED",
+		1: "SCOPE_UPDATE_TYPE_ADD",
+		2: "SCOPE_UPDATE_TYPE_MODIFY",
+		3: "SCOPE_UPDATE_TYPE_REMOVE",
 	}
 	ScopeUpdateType_value = map[string]int32{
-		"SCOPE_UPDATE_TYPE_ADD":    0,
-		"SCOPE_UPDATE_TYPE_MODIFY": 1,
-		"SCOPE_UPDATE_TYPE_REMOVE": 2,
+		"SCOPE_UPDATE_TYPE_UNSPECIFIED": 0,
+		"SCOPE_UPDATE_TYPE_ADD":         1,
+		"SCOPE_UPDATE_TYPE_MODIFY":      2,
+		"SCOPE_UPDATE_TYPE_REMOVE":      3,
 	}
 )
 
@@ -122,33 +125,33 @@ func (ScopeUpdateType) EnumDescriptor() ([]byte, []int) {
 	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{1}
 }
 
-type AgentMessage struct {
+type AgentStreamRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
 	//
-	//	*AgentMessage_RegisterNode
-	//	*AgentMessage_HealthReport
-	//	*AgentMessage_DrainRequest
-	//	*AgentMessage_UpdateNodeServices
-	Payload       isAgentMessage_Payload `protobuf_oneof:"payload"`
+	//	*AgentStreamRequest_RegisterNode
+	//	*AgentStreamRequest_HealthReport
+	//	*AgentStreamRequest_DrainRequest
+	//	*AgentStreamRequest_UpdateNodeServices
+	Payload       isAgentStreamRequest_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *AgentMessage) Reset() {
-	*x = AgentMessage{}
+func (x *AgentStreamRequest) Reset() {
+	*x = AgentStreamRequest{}
 	mi := &file_omnimesh_v1_agent_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *AgentMessage) String() string {
+func (x *AgentStreamRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*AgentMessage) ProtoMessage() {}
+func (*AgentStreamRequest) ProtoMessage() {}
 
-func (x *AgentMessage) ProtoReflect() protoreflect.Message {
+func (x *AgentStreamRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_omnimesh_v1_agent_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -160,81 +163,81 @@ func (x *AgentMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use AgentMessage.ProtoReflect.Descriptor instead.
-func (*AgentMessage) Descriptor() ([]byte, []int) {
+// Deprecated: Use AgentStreamRequest.ProtoReflect.Descriptor instead.
+func (*AgentStreamRequest) Descriptor() ([]byte, []int) {
 	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *AgentMessage) GetPayload() isAgentMessage_Payload {
+func (x *AgentStreamRequest) GetPayload() isAgentStreamRequest_Payload {
 	if x != nil {
 		return x.Payload
 	}
 	return nil
 }
 
-func (x *AgentMessage) GetRegisterNode() *RegisterNodeRequest {
+func (x *AgentStreamRequest) GetRegisterNode() *RegisterNodeRequest {
 	if x != nil {
-		if x, ok := x.Payload.(*AgentMessage_RegisterNode); ok {
+		if x, ok := x.Payload.(*AgentStreamRequest_RegisterNode); ok {
 			return x.RegisterNode
 		}
 	}
 	return nil
 }
 
-func (x *AgentMessage) GetHealthReport() *HealthReport {
+func (x *AgentStreamRequest) GetHealthReport() *HealthReport {
 	if x != nil {
-		if x, ok := x.Payload.(*AgentMessage_HealthReport); ok {
+		if x, ok := x.Payload.(*AgentStreamRequest_HealthReport); ok {
 			return x.HealthReport
 		}
 	}
 	return nil
 }
 
-func (x *AgentMessage) GetDrainRequest() *DrainRequest {
+func (x *AgentStreamRequest) GetDrainRequest() *DrainRequest {
 	if x != nil {
-		if x, ok := x.Payload.(*AgentMessage_DrainRequest); ok {
+		if x, ok := x.Payload.(*AgentStreamRequest_DrainRequest); ok {
 			return x.DrainRequest
 		}
 	}
 	return nil
 }
 
-func (x *AgentMessage) GetUpdateNodeServices() *UpdateNodeServicesRequest {
+func (x *AgentStreamRequest) GetUpdateNodeServices() *UpdateNodeServicesRequest {
 	if x != nil {
-		if x, ok := x.Payload.(*AgentMessage_UpdateNodeServices); ok {
+		if x, ok := x.Payload.(*AgentStreamRequest_UpdateNodeServices); ok {
 			return x.UpdateNodeServices
 		}
 	}
 	return nil
 }
 
-type isAgentMessage_Payload interface {
-	isAgentMessage_Payload()
+type isAgentStreamRequest_Payload interface {
+	isAgentStreamRequest_Payload()
 }
 
-type AgentMessage_RegisterNode struct {
+type AgentStreamRequest_RegisterNode struct {
 	RegisterNode *RegisterNodeRequest `protobuf:"bytes,1,opt,name=register_node,json=registerNode,proto3,oneof"`
 }
 
-type AgentMessage_HealthReport struct {
+type AgentStreamRequest_HealthReport struct {
 	HealthReport *HealthReport `protobuf:"bytes,2,opt,name=health_report,json=healthReport,proto3,oneof"`
 }
 
-type AgentMessage_DrainRequest struct {
+type AgentStreamRequest_DrainRequest struct {
 	DrainRequest *DrainRequest `protobuf:"bytes,3,opt,name=drain_request,json=drainRequest,proto3,oneof"`
 }
 
-type AgentMessage_UpdateNodeServices struct {
+type AgentStreamRequest_UpdateNodeServices struct {
 	UpdateNodeServices *UpdateNodeServicesRequest `protobuf:"bytes,4,opt,name=update_node_services,json=updateNodeServices,proto3,oneof"`
 }
 
-func (*AgentMessage_RegisterNode) isAgentMessage_Payload() {}
+func (*AgentStreamRequest_RegisterNode) isAgentStreamRequest_Payload() {}
 
-func (*AgentMessage_HealthReport) isAgentMessage_Payload() {}
+func (*AgentStreamRequest_HealthReport) isAgentStreamRequest_Payload() {}
 
-func (*AgentMessage_DrainRequest) isAgentMessage_Payload() {}
+func (*AgentStreamRequest_DrainRequest) isAgentStreamRequest_Payload() {}
 
-func (*AgentMessage_UpdateNodeServices) isAgentMessage_Payload() {}
+func (*AgentStreamRequest_UpdateNodeServices) isAgentStreamRequest_Payload() {}
 
 type RegisterNodeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -386,7 +389,7 @@ func (x *HealthReport) GetStatus() EndpointHealthStatus {
 	if x != nil {
 		return x.Status
 	}
-	return EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNKNOWN
+	return EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNSPECIFIED
 }
 
 func (x *HealthReport) GetProbeType() string {
@@ -508,32 +511,32 @@ func (x *DrainRequest) GetEndpointAddress() string {
 	return ""
 }
 
-type ControlMessage struct {
+type AgentStreamResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
 	//
-	//	*ControlMessage_ScopeSnapshot
-	//	*ControlMessage_ScopeUpdate
-	//	*ControlMessage_RouteUpdate
-	Payload       isControlMessage_Payload `protobuf_oneof:"payload"`
+	//	*AgentStreamResponse_ScopeSnapshot
+	//	*AgentStreamResponse_ScopeUpdate
+	//	*AgentStreamResponse_RouteUpdate
+	Payload       isAgentStreamResponse_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ControlMessage) Reset() {
-	*x = ControlMessage{}
+func (x *AgentStreamResponse) Reset() {
+	*x = AgentStreamResponse{}
 	mi := &file_omnimesh_v1_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ControlMessage) String() string {
+func (x *AgentStreamResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ControlMessage) ProtoMessage() {}
+func (*AgentStreamResponse) ProtoMessage() {}
 
-func (x *ControlMessage) ProtoReflect() protoreflect.Message {
+func (x *AgentStreamResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_omnimesh_v1_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -545,66 +548,66 @@ func (x *ControlMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ControlMessage.ProtoReflect.Descriptor instead.
-func (*ControlMessage) Descriptor() ([]byte, []int) {
+// Deprecated: Use AgentStreamResponse.ProtoReflect.Descriptor instead.
+func (*AgentStreamResponse) Descriptor() ([]byte, []int) {
 	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *ControlMessage) GetPayload() isControlMessage_Payload {
+func (x *AgentStreamResponse) GetPayload() isAgentStreamResponse_Payload {
 	if x != nil {
 		return x.Payload
 	}
 	return nil
 }
 
-func (x *ControlMessage) GetScopeSnapshot() *ScopeSnapshot {
+func (x *AgentStreamResponse) GetScopeSnapshot() *ScopeSnapshot {
 	if x != nil {
-		if x, ok := x.Payload.(*ControlMessage_ScopeSnapshot); ok {
+		if x, ok := x.Payload.(*AgentStreamResponse_ScopeSnapshot); ok {
 			return x.ScopeSnapshot
 		}
 	}
 	return nil
 }
 
-func (x *ControlMessage) GetScopeUpdate() *ScopeUpdate {
+func (x *AgentStreamResponse) GetScopeUpdate() *ScopeUpdate {
 	if x != nil {
-		if x, ok := x.Payload.(*ControlMessage_ScopeUpdate); ok {
+		if x, ok := x.Payload.(*AgentStreamResponse_ScopeUpdate); ok {
 			return x.ScopeUpdate
 		}
 	}
 	return nil
 }
 
-func (x *ControlMessage) GetRouteUpdate() *RouteUpdate {
+func (x *AgentStreamResponse) GetRouteUpdate() *RouteUpdate {
 	if x != nil {
-		if x, ok := x.Payload.(*ControlMessage_RouteUpdate); ok {
+		if x, ok := x.Payload.(*AgentStreamResponse_RouteUpdate); ok {
 			return x.RouteUpdate
 		}
 	}
 	return nil
 }
 
-type isControlMessage_Payload interface {
-	isControlMessage_Payload()
+type isAgentStreamResponse_Payload interface {
+	isAgentStreamResponse_Payload()
 }
 
-type ControlMessage_ScopeSnapshot struct {
+type AgentStreamResponse_ScopeSnapshot struct {
 	ScopeSnapshot *ScopeSnapshot `protobuf:"bytes,1,opt,name=scope_snapshot,json=scopeSnapshot,proto3,oneof"`
 }
 
-type ControlMessage_ScopeUpdate struct {
+type AgentStreamResponse_ScopeUpdate struct {
 	ScopeUpdate *ScopeUpdate `protobuf:"bytes,2,opt,name=scope_update,json=scopeUpdate,proto3,oneof"`
 }
 
-type ControlMessage_RouteUpdate struct {
+type AgentStreamResponse_RouteUpdate struct {
 	RouteUpdate *RouteUpdate `protobuf:"bytes,3,opt,name=route_update,json=routeUpdate,proto3,oneof"`
 }
 
-func (*ControlMessage_ScopeSnapshot) isControlMessage_Payload() {}
+func (*AgentStreamResponse_ScopeSnapshot) isAgentStreamResponse_Payload() {}
 
-func (*ControlMessage_ScopeUpdate) isControlMessage_Payload() {}
+func (*AgentStreamResponse_ScopeUpdate) isAgentStreamResponse_Payload() {}
 
-func (*ControlMessage_RouteUpdate) isControlMessage_Payload() {}
+func (*AgentStreamResponse_RouteUpdate) isAgentStreamResponse_Payload() {}
 
 type ScopeSnapshot struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
@@ -718,7 +721,7 @@ func (x *ScopeUpdate) GetType() ScopeUpdateType {
 	if x != nil {
 		return x.Type
 	}
-	return ScopeUpdateType_SCOPE_UPDATE_TYPE_ADD
+	return ScopeUpdateType_SCOPE_UPDATE_TYPE_UNSPECIFIED
 }
 
 func (x *ScopeUpdate) GetServices() []*ServiceInfo {
@@ -927,7 +930,7 @@ func (x *EndpointInfo) GetHealth() EndpointHealthStatus {
 	if x != nil {
 		return x.Health
 	}
-	return EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNKNOWN
+	return EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNSPECIFIED
 }
 
 type RouteInfo struct {
@@ -1282,8 +1285,8 @@ var File_omnimesh_v1_agent_proto protoreflect.FileDescriptor
 
 const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x17omnimesh/v1/agent.proto\x12\vomnimesh.v1\"\xc2\x02\n" +
-	"\fAgentMessage\x12G\n" +
+	"\x17omnimesh/v1/agent.proto\x12\vomnimesh.v1\"\xc8\x02\n" +
+	"\x12AgentStreamRequest\x12G\n" +
 	"\rregister_node\x18\x01 \x01(\v2 .omnimesh.v1.RegisterNodeRequestH\x00R\fregisterNode\x12@\n" +
 	"\rhealth_report\x18\x02 \x01(\v2\x19.omnimesh.v1.HealthReportH\x00R\fhealthReport\x12@\n" +
 	"\rdrain_request\x18\x03 \x01(\v2\x19.omnimesh.v1.DrainRequestH\x00R\fdrainRequest\x12Z\n" +
@@ -1312,8 +1315,8 @@ const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"\fDrainRequest\x12+\n" +
 	"\x11service_namespace\x18\x01 \x01(\tR\x10serviceNamespace\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12)\n" +
-	"\x10endpoint_address\x18\x03 \x01(\tR\x0fendpointAddress\"\xde\x01\n" +
-	"\x0eControlMessage\x12C\n" +
+	"\x10endpoint_address\x18\x03 \x01(\tR\x0fendpointAddress\"\xe3\x01\n" +
+	"\x13AgentStreamResponse\x12C\n" +
 	"\x0escope_snapshot\x18\x01 \x01(\v2\x1a.omnimesh.v1.ScopeSnapshotH\x00R\rscopeSnapshot\x12=\n" +
 	"\fscope_update\x18\x02 \x01(\v2\x18.omnimesh.v1.ScopeUpdateH\x00R\vscopeUpdate\x12=\n" +
 	"\froute_update\x18\x03 \x01(\v2\x18.omnimesh.v1.RouteUpdateH\x00R\vrouteUpdateB\t\n" +
@@ -1372,18 +1375,19 @@ const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"\x06labels\x18\x03 \x03(\v2%.omnimesh.v1.SelectorInfo.LabelsEntryR\x06labels\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01*\xa9\x01\n" +
-	"\x14EndpointHealthStatus\x12\"\n" +
-	"\x1eENDPOINT_HEALTH_STATUS_UNKNOWN\x10\x00\x12\"\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01*\xad\x01\n" +
+	"\x14EndpointHealthStatus\x12&\n" +
+	"\"ENDPOINT_HEALTH_STATUS_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eENDPOINT_HEALTH_STATUS_HEALTHY\x10\x01\x12$\n" +
 	" ENDPOINT_HEALTH_STATUS_UNHEALTHY\x10\x02\x12#\n" +
-	"\x1fENDPOINT_HEALTH_STATUS_DRAINING\x10\x03*h\n" +
-	"\x0fScopeUpdateType\x12\x19\n" +
-	"\x15SCOPE_UPDATE_TYPE_ADD\x10\x00\x12\x1c\n" +
-	"\x18SCOPE_UPDATE_TYPE_MODIFY\x10\x01\x12\x1c\n" +
-	"\x18SCOPE_UPDATE_TYPE_REMOVE\x10\x022Y\n" +
-	"\fAgentService\x12I\n" +
-	"\vAgentStream\x12\x19.omnimesh.v1.AgentMessage\x1a\x1b.omnimesh.v1.ControlMessage(\x010\x01BDZBgithub.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1;omnimeshv1b\x06proto3"
+	"\x1fENDPOINT_HEALTH_STATUS_DRAINING\x10\x03*\x8b\x01\n" +
+	"\x0fScopeUpdateType\x12!\n" +
+	"\x1dSCOPE_UPDATE_TYPE_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15SCOPE_UPDATE_TYPE_ADD\x10\x01\x12\x1c\n" +
+	"\x18SCOPE_UPDATE_TYPE_MODIFY\x10\x02\x12\x1c\n" +
+	"\x18SCOPE_UPDATE_TYPE_REMOVE\x10\x032d\n" +
+	"\fAgentService\x12T\n" +
+	"\vAgentStream\x12\x1f.omnimesh.v1.AgentStreamRequest\x1a .omnimesh.v1.AgentStreamResponse(\x010\x01BDZBgithub.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1;omnimeshv1b\x06proto3"
 
 var (
 	file_omnimesh_v1_agent_proto_rawDescOnce sync.Once
@@ -1402,12 +1406,12 @@ var file_omnimesh_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_omnimesh_v1_agent_proto_goTypes = []any{
 	(EndpointHealthStatus)(0),         // 0: omnimesh.v1.EndpointHealthStatus
 	(ScopeUpdateType)(0),              // 1: omnimesh.v1.ScopeUpdateType
-	(*AgentMessage)(nil),              // 2: omnimesh.v1.AgentMessage
+	(*AgentStreamRequest)(nil),        // 2: omnimesh.v1.AgentStreamRequest
 	(*RegisterNodeRequest)(nil),       // 3: omnimesh.v1.RegisterNodeRequest
 	(*HealthReport)(nil),              // 4: omnimesh.v1.HealthReport
 	(*UpdateNodeServicesRequest)(nil), // 5: omnimesh.v1.UpdateNodeServicesRequest
 	(*DrainRequest)(nil),              // 6: omnimesh.v1.DrainRequest
-	(*ControlMessage)(nil),            // 7: omnimesh.v1.ControlMessage
+	(*AgentStreamResponse)(nil),       // 7: omnimesh.v1.AgentStreamResponse
 	(*ScopeSnapshot)(nil),             // 8: omnimesh.v1.ScopeSnapshot
 	(*ScopeUpdate)(nil),               // 9: omnimesh.v1.ScopeUpdate
 	(*RouteUpdate)(nil),               // 10: omnimesh.v1.RouteUpdate
@@ -1423,15 +1427,15 @@ var file_omnimesh_v1_agent_proto_goTypes = []any{
 	nil,                               // 20: omnimesh.v1.SelectorInfo.LabelsEntry
 }
 var file_omnimesh_v1_agent_proto_depIdxs = []int32{
-	3,  // 0: omnimesh.v1.AgentMessage.register_node:type_name -> omnimesh.v1.RegisterNodeRequest
-	4,  // 1: omnimesh.v1.AgentMessage.health_report:type_name -> omnimesh.v1.HealthReport
-	6,  // 2: omnimesh.v1.AgentMessage.drain_request:type_name -> omnimesh.v1.DrainRequest
-	5,  // 3: omnimesh.v1.AgentMessage.update_node_services:type_name -> omnimesh.v1.UpdateNodeServicesRequest
+	3,  // 0: omnimesh.v1.AgentStreamRequest.register_node:type_name -> omnimesh.v1.RegisterNodeRequest
+	4,  // 1: omnimesh.v1.AgentStreamRequest.health_report:type_name -> omnimesh.v1.HealthReport
+	6,  // 2: omnimesh.v1.AgentStreamRequest.drain_request:type_name -> omnimesh.v1.DrainRequest
+	5,  // 3: omnimesh.v1.AgentStreamRequest.update_node_services:type_name -> omnimesh.v1.UpdateNodeServicesRequest
 	18, // 4: omnimesh.v1.RegisterNodeRequest.labels:type_name -> omnimesh.v1.RegisterNodeRequest.LabelsEntry
 	0,  // 5: omnimesh.v1.HealthReport.status:type_name -> omnimesh.v1.EndpointHealthStatus
-	8,  // 6: omnimesh.v1.ControlMessage.scope_snapshot:type_name -> omnimesh.v1.ScopeSnapshot
-	9,  // 7: omnimesh.v1.ControlMessage.scope_update:type_name -> omnimesh.v1.ScopeUpdate
-	10, // 8: omnimesh.v1.ControlMessage.route_update:type_name -> omnimesh.v1.RouteUpdate
+	8,  // 6: omnimesh.v1.AgentStreamResponse.scope_snapshot:type_name -> omnimesh.v1.ScopeSnapshot
+	9,  // 7: omnimesh.v1.AgentStreamResponse.scope_update:type_name -> omnimesh.v1.ScopeUpdate
+	10, // 8: omnimesh.v1.AgentStreamResponse.route_update:type_name -> omnimesh.v1.RouteUpdate
 	11, // 9: omnimesh.v1.ScopeSnapshot.services:type_name -> omnimesh.v1.ServiceInfo
 	13, // 10: omnimesh.v1.ScopeSnapshot.routes:type_name -> omnimesh.v1.RouteInfo
 	15, // 11: omnimesh.v1.ScopeSnapshot.traffic_policies:type_name -> omnimesh.v1.TrafficPolicyInfo
@@ -1448,8 +1452,8 @@ var file_omnimesh_v1_agent_proto_depIdxs = []int32{
 	17, // 22: omnimesh.v1.AuthzPolicyInfo.source:type_name -> omnimesh.v1.SelectorInfo
 	17, // 23: omnimesh.v1.AuthzPolicyInfo.destination:type_name -> omnimesh.v1.SelectorInfo
 	20, // 24: omnimesh.v1.SelectorInfo.labels:type_name -> omnimesh.v1.SelectorInfo.LabelsEntry
-	2,  // 25: omnimesh.v1.AgentService.AgentStream:input_type -> omnimesh.v1.AgentMessage
-	7,  // 26: omnimesh.v1.AgentService.AgentStream:output_type -> omnimesh.v1.ControlMessage
+	2,  // 25: omnimesh.v1.AgentService.AgentStream:input_type -> omnimesh.v1.AgentStreamRequest
+	7,  // 26: omnimesh.v1.AgentService.AgentStream:output_type -> omnimesh.v1.AgentStreamResponse
 	26, // [26:27] is the sub-list for method output_type
 	25, // [25:26] is the sub-list for method input_type
 	25, // [25:25] is the sub-list for extension type_name
@@ -1463,15 +1467,15 @@ func file_omnimesh_v1_agent_proto_init() {
 		return
 	}
 	file_omnimesh_v1_agent_proto_msgTypes[0].OneofWrappers = []any{
-		(*AgentMessage_RegisterNode)(nil),
-		(*AgentMessage_HealthReport)(nil),
-		(*AgentMessage_DrainRequest)(nil),
-		(*AgentMessage_UpdateNodeServices)(nil),
+		(*AgentStreamRequest_RegisterNode)(nil),
+		(*AgentStreamRequest_HealthReport)(nil),
+		(*AgentStreamRequest_DrainRequest)(nil),
+		(*AgentStreamRequest_UpdateNodeServices)(nil),
 	}
 	file_omnimesh_v1_agent_proto_msgTypes[5].OneofWrappers = []any{
-		(*ControlMessage_ScopeSnapshot)(nil),
-		(*ControlMessage_ScopeUpdate)(nil),
-		(*ControlMessage_RouteUpdate)(nil),
+		(*AgentStreamResponse_ScopeSnapshot)(nil),
+		(*AgentStreamResponse_ScopeUpdate)(nil),
+		(*AgentStreamResponse_RouteUpdate)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

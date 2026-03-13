@@ -13,14 +13,11 @@ func TestRouteAppService_ApplyAndGet(t *testing.T) {
 	ctx := context.Background()
 
 	route := &model.TargetRoute{
-		Name:              "order-route",
-		Namespace:         "production",
-		TargetService:     "order-service",
-		DestinationTarget: "k8s-cluster-1",
-		Weight:            80,
-		Failover: &model.FailoverPolicy{
-			ActiveWhenTargetIsDown: "k8s-cluster-2",
-		},
+		Name:          "order-route",
+		Namespace:     "production",
+		TargetService: "order-service",
+		NodeID:        "node-1",
+		Labels:        map[string]string{"env": "prod", "version": "v1"},
 	}
 
 	if err := app.Apply(ctx, route); err != nil {
@@ -35,14 +32,11 @@ func TestRouteAppService_ApplyAndGet(t *testing.T) {
 	if got.Name != "order-route" || got.Namespace != "production" {
 		t.Errorf("Get() metadata mismatch: got %v/%v", got.Namespace, got.Name)
 	}
-	if got.TargetService != "order-service" || got.DestinationTarget != "k8s-cluster-1" {
-		t.Errorf("Get() specs mismatch")
+	if got.TargetService != "order-service" {
+		t.Errorf("Get().TargetService = %q, want %q", got.TargetService, "order-service")
 	}
-	if got.Weight != 80 {
-		t.Errorf("Get().Weight = %d, want 80", got.Weight)
-	}
-	if got.Failover == nil || got.Failover.ActiveWhenTargetIsDown != "k8s-cluster-2" {
-		t.Errorf("Get().Failover mismatch")
+	if got.Labels["env"] != "prod" || got.Labels["version"] != "v1" {
+		t.Errorf("Get().Labels mismatch: got %v", got.Labels)
 	}
 }
 
@@ -59,22 +53,46 @@ func TestRouteAppService_ApplyValidation(t *testing.T) {
 		{
 			name: "missing name",
 			route: &model.TargetRoute{
-				Namespace: "default",
+				Namespace:     "default",
+				NodeID:        "node-1",
+				TargetService: "svc",
 			},
 			wantError: true,
 		},
 		{
 			name: "missing namespace",
 			route: &model.TargetRoute{
-				Name: "route-1",
+				Name:          "route-1",
+				NodeID:        "node-1",
+				TargetService: "svc",
+			},
+			wantError: true,
+		},
+		{
+			name: "missing nodeID",
+			route: &model.TargetRoute{
+				Name:          "route-1",
+				Namespace:     "default",
+				TargetService: "svc",
+			},
+			wantError: true,
+		},
+		{
+			name: "missing targetService",
+			route: &model.TargetRoute{
+				Name:      "route-1",
+				Namespace: "default",
+				NodeID:    "node-1",
 			},
 			wantError: true,
 		},
 		{
 			name: "valid route",
 			route: &model.TargetRoute{
-				Name:      "route-1",
-				Namespace: "default",
+				Name:          "route-1",
+				Namespace:     "default",
+				NodeID:        "node-1",
+				TargetService: "order-service",
 			},
 			wantError: false,
 		},
@@ -95,7 +113,7 @@ func TestRouteAppService_Delete(t *testing.T) {
 	app := NewRouteAppService(resources, nil)
 	ctx := context.Background()
 
-	route := &model.TargetRoute{Name: "test-route", Namespace: "default"}
+	route := &model.TargetRoute{Name: "test-route", Namespace: "default", NodeID: "node-1", TargetService: "svc"}
 	app.Apply(ctx, route)
 
 	if err := app.Delete(ctx, "default", "test-route"); err != nil {
@@ -114,9 +132,9 @@ func TestRouteAppService_List(t *testing.T) {
 	ctx := context.Background()
 
 	// Apply routes in different namespaces
-	app.Apply(ctx, &model.TargetRoute{Name: "route-a", Namespace: "ns1"})
-	app.Apply(ctx, &model.TargetRoute{Name: "route-b", Namespace: "ns1"})
-	app.Apply(ctx, &model.TargetRoute{Name: "route-c", Namespace: "ns2"})
+	app.Apply(ctx, &model.TargetRoute{Name: "route-a", Namespace: "ns1", NodeID: "node-1", TargetService: "svc"})
+	app.Apply(ctx, &model.TargetRoute{Name: "route-b", Namespace: "ns1", NodeID: "node-2", TargetService: "svc"})
+	app.Apply(ctx, &model.TargetRoute{Name: "route-c", Namespace: "ns2", NodeID: "node-3", TargetService: "svc"})
 
 	// List all
 	all, err := app.List(ctx, "")

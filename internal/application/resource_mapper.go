@@ -176,30 +176,19 @@ func resourceToTarget(r *model.Resource) (*model.NetworkTarget, error) {
 	return t, nil
 }
 
-// failoverPolicySpec is the JSON representation for FailoverPolicy.
-type failoverPolicySpec struct {
-	ActiveWhenTargetIsDown string `json:"activeWhenTargetIsDown,omitempty"`
-}
-
 // routeSpec is the JSON spec representation for TargetRoute resources.
 type routeSpec struct {
-	TargetService     string              `json:"targetService,omitempty"`
-	DestinationTarget string              `json:"destinationTarget,omitempty"`
-	Weight            int                 `json:"weight,omitempty"`
-	Failover          *failoverPolicySpec `json:"failover,omitempty"`
+	TargetService string            `json:"targetService,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	NodeID        string            `json:"nodeID,omitempty"`
 }
 
-// routeToResource converts a domain TargetRoute to a generic Resource.
+// routeToResource converts a domain TargetRoute to a generic Resource for storage.
 func routeToResource(rt *model.TargetRoute) *model.Resource {
 	spec := routeSpec{
-		TargetService:     rt.TargetService,
-		DestinationTarget: rt.DestinationTarget,
-		Weight:            rt.Weight,
-	}
-	if rt.Failover != nil {
-		spec.Failover = &failoverPolicySpec{
-			ActiveWhenTargetIsDown: rt.Failover.ActiveWhenTargetIsDown,
-		}
+		TargetService: rt.TargetService,
+		Labels:        rt.Labels,
+		NodeID:        rt.NodeID,
 	}
 	specJSON, _ := json.Marshal(spec)
 
@@ -228,16 +217,11 @@ func resourceToRoute(r *model.Resource) (*model.TargetRoute, error) {
 	}
 
 	rt := &model.TargetRoute{
-		Name:              r.Metadata.Name,
-		Namespace:         r.Metadata.Namespace,
-		TargetService:     spec.TargetService,
-		DestinationTarget: spec.DestinationTarget,
-		Weight:            spec.Weight,
-	}
-	if spec.Failover != nil {
-		rt.Failover = &model.FailoverPolicy{
-			ActiveWhenTargetIsDown: spec.Failover.ActiveWhenTargetIsDown,
-		}
+		Name:          r.Metadata.Name,
+		Namespace:     r.Metadata.Namespace,
+		TargetService: spec.TargetService,
+		Labels:        spec.Labels,
+		NodeID:        spec.NodeID,
 	}
 
 	return rt, nil

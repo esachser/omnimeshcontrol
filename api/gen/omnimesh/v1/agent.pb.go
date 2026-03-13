@@ -125,6 +125,107 @@ func (ScopeUpdateType) EnumDescriptor() ([]byte, []int) {
 	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{1}
 }
 
+type RateLimitAction int32
+
+const (
+	RateLimitAction_RATE_LIMIT_ACTION_UNSPECIFIED RateLimitAction = 0
+	RateLimitAction_RATE_LIMIT_ACTION_REJECT      RateLimitAction = 1
+	RateLimitAction_RATE_LIMIT_ACTION_QUEUE       RateLimitAction = 2
+)
+
+// Enum value maps for RateLimitAction.
+var (
+	RateLimitAction_name = map[int32]string{
+		0: "RATE_LIMIT_ACTION_UNSPECIFIED",
+		1: "RATE_LIMIT_ACTION_REJECT",
+		2: "RATE_LIMIT_ACTION_QUEUE",
+	}
+	RateLimitAction_value = map[string]int32{
+		"RATE_LIMIT_ACTION_UNSPECIFIED": 0,
+		"RATE_LIMIT_ACTION_REJECT":      1,
+		"RATE_LIMIT_ACTION_QUEUE":       2,
+	}
+)
+
+func (x RateLimitAction) Enum() *RateLimitAction {
+	p := new(RateLimitAction)
+	*p = x
+	return p
+}
+
+func (x RateLimitAction) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RateLimitAction) Descriptor() protoreflect.EnumDescriptor {
+	return file_omnimesh_v1_agent_proto_enumTypes[2].Descriptor()
+}
+
+func (RateLimitAction) Type() protoreflect.EnumType {
+	return &file_omnimesh_v1_agent_proto_enumTypes[2]
+}
+
+func (x RateLimitAction) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RateLimitAction.Descriptor instead.
+func (RateLimitAction) EnumDescriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{2}
+}
+
+type LoadBalancerAlgorithm int32
+
+const (
+	LoadBalancerAlgorithm_LOAD_BALANCER_ALGORITHM_UNSPECIFIED          LoadBalancerAlgorithm = 0
+	LoadBalancerAlgorithm_LOAD_BALANCER_ALGORITHM_WEIGHTED_ROUND_ROBIN LoadBalancerAlgorithm = 1
+	LoadBalancerAlgorithm_LOAD_BALANCER_ALGORITHM_LEAST_CONNECTIONS    LoadBalancerAlgorithm = 2
+	LoadBalancerAlgorithm_LOAD_BALANCER_ALGORITHM_RANDOM               LoadBalancerAlgorithm = 3
+)
+
+// Enum value maps for LoadBalancerAlgorithm.
+var (
+	LoadBalancerAlgorithm_name = map[int32]string{
+		0: "LOAD_BALANCER_ALGORITHM_UNSPECIFIED",
+		1: "LOAD_BALANCER_ALGORITHM_WEIGHTED_ROUND_ROBIN",
+		2: "LOAD_BALANCER_ALGORITHM_LEAST_CONNECTIONS",
+		3: "LOAD_BALANCER_ALGORITHM_RANDOM",
+	}
+	LoadBalancerAlgorithm_value = map[string]int32{
+		"LOAD_BALANCER_ALGORITHM_UNSPECIFIED":          0,
+		"LOAD_BALANCER_ALGORITHM_WEIGHTED_ROUND_ROBIN": 1,
+		"LOAD_BALANCER_ALGORITHM_LEAST_CONNECTIONS":    2,
+		"LOAD_BALANCER_ALGORITHM_RANDOM":               3,
+	}
+)
+
+func (x LoadBalancerAlgorithm) Enum() *LoadBalancerAlgorithm {
+	p := new(LoadBalancerAlgorithm)
+	*p = x
+	return p
+}
+
+func (x LoadBalancerAlgorithm) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (LoadBalancerAlgorithm) Descriptor() protoreflect.EnumDescriptor {
+	return file_omnimesh_v1_agent_proto_enumTypes[3].Descriptor()
+}
+
+func (LoadBalancerAlgorithm) Type() protoreflect.EnumType {
+	return &file_omnimesh_v1_agent_proto_enumTypes[3]
+}
+
+func (x LoadBalancerAlgorithm) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use LoadBalancerAlgorithm.Descriptor instead.
+func (LoadBalancerAlgorithm) EnumDescriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{3}
+}
+
 type AgentStreamRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
@@ -133,6 +234,7 @@ type AgentStreamRequest struct {
 	//	*AgentStreamRequest_HealthReport
 	//	*AgentStreamRequest_DrainRequest
 	//	*AgentStreamRequest_UpdateNodeServices
+	//	*AgentStreamRequest_DrainNode
 	Payload       isAgentStreamRequest_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -211,6 +313,15 @@ func (x *AgentStreamRequest) GetUpdateNodeServices() *UpdateNodeServicesRequest 
 	return nil
 }
 
+func (x *AgentStreamRequest) GetDrainNode() *DrainNodeRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentStreamRequest_DrainNode); ok {
+			return x.DrainNode
+		}
+	}
+	return nil
+}
+
 type isAgentStreamRequest_Payload interface {
 	isAgentStreamRequest_Payload()
 }
@@ -231,6 +342,10 @@ type AgentStreamRequest_UpdateNodeServices struct {
 	UpdateNodeServices *UpdateNodeServicesRequest `protobuf:"bytes,4,opt,name=update_node_services,json=updateNodeServices,proto3,oneof"`
 }
 
+type AgentStreamRequest_DrainNode struct {
+	DrainNode *DrainNodeRequest `protobuf:"bytes,5,opt,name=drain_node,json=drainNode,proto3,oneof"`
+}
+
 func (*AgentStreamRequest_RegisterNode) isAgentStreamRequest_Payload() {}
 
 func (*AgentStreamRequest_HealthReport) isAgentStreamRequest_Payload() {}
@@ -239,13 +354,15 @@ func (*AgentStreamRequest_DrainRequest) isAgentStreamRequest_Payload() {}
 
 func (*AgentStreamRequest_UpdateNodeServices) isAgentStreamRequest_Payload() {}
 
+func (*AgentStreamRequest_DrainNode) isAgentStreamRequest_Payload() {}
+
 type RegisterNodeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	Platform      string                 `protobuf:"bytes,2,opt,name=platform,proto3" json:"platform,omitempty"` // "linux", "windows", "darwin"
 	Addr          string                 `protobuf:"bytes,3,opt,name=addr,proto3" json:"addr,omitempty"`         // "host:port" for HBONE tunneling
 	Labels        map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Services      []string               `protobuf:"bytes,5,rep,name=services,proto3" json:"services,omitempty"` // ServiceIDs in "namespace/name" format
+	Services      []*NodeServiceInfo     `protobuf:"bytes,5,rep,name=services,proto3" json:"services,omitempty"` // ServiceIDs in "namespace/name" format
 	Target        string                 `protobuf:"bytes,6,opt,name=target,proto3" json:"target,omitempty"`     // NetworkTarget the agent belongs to
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -309,7 +426,7 @@ func (x *RegisterNodeRequest) GetLabels() map[string]string {
 	return nil
 }
 
-func (x *RegisterNodeRequest) GetServices() []string {
+func (x *RegisterNodeRequest) GetServices() []*NodeServiceInfo {
 	if x != nil {
 		return x.Services
 	}
@@ -324,14 +441,14 @@ func (x *RegisterNodeRequest) GetTarget() string {
 }
 
 type HealthReport struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	ServiceNamespace string                 `protobuf:"bytes,1,opt,name=service_namespace,json=serviceNamespace,proto3" json:"service_namespace,omitempty"`
-	ServiceName      string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
-	EndpointAddress  string                 `protobuf:"bytes,3,opt,name=endpoint_address,json=endpointAddress,proto3" json:"endpoint_address,omitempty"`
-	Status           EndpointHealthStatus   `protobuf:"varint,4,opt,name=status,proto3,enum=omnimesh.v1.EndpointHealthStatus" json:"status,omitempty"`
-	ProbeType        string                 `protobuf:"bytes,5,opt,name=probe_type,json=probeType,proto3" json:"probe_type,omitempty"` // "TCP", "HTTP", "gRPC"
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	ServiceName   string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	EndpointId    string                 `protobuf:"bytes,3,opt,name=endpoint_id,json=endpointId,proto3" json:"endpoint_id,omitempty"`
+	Status        EndpointHealthStatus   `protobuf:"varint,4,opt,name=status,proto3,enum=omnimesh.v1.EndpointHealthStatus" json:"status,omitempty"`
+	ProbeType     string                 `protobuf:"bytes,5,opt,name=probe_type,json=probeType,proto3" json:"probe_type,omitempty"` // "TCP", "HTTP", "gRPC"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HealthReport) Reset() {
@@ -364,9 +481,9 @@ func (*HealthReport) Descriptor() ([]byte, []int) {
 	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *HealthReport) GetServiceNamespace() string {
+func (x *HealthReport) GetNamespace() string {
 	if x != nil {
-		return x.ServiceNamespace
+		return x.Namespace
 	}
 	return ""
 }
@@ -378,9 +495,9 @@ func (x *HealthReport) GetServiceName() string {
 	return ""
 }
 
-func (x *HealthReport) GetEndpointAddress() string {
+func (x *HealthReport) GetEndpointId() string {
 	if x != nil {
-		return x.EndpointAddress
+		return x.EndpointId
 	}
 	return ""
 }
@@ -401,8 +518,8 @@ func (x *HealthReport) GetProbeType() string {
 
 type UpdateNodeServicesRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	AddedServices   []string               `protobuf:"bytes,1,rep,name=added_services,json=addedServices,proto3" json:"added_services,omitempty"`       // ServiceIDs in "namespace/name" format
-	RemovedServices []string               `protobuf:"bytes,2,rep,name=removed_services,json=removedServices,proto3" json:"removed_services,omitempty"` // ServiceIDs in "namespace/name" format
+	AddedServices   []*NodeServiceInfo     `protobuf:"bytes,1,rep,name=added_services,json=addedServices,proto3" json:"added_services,omitempty"`       // ServiceIDs in "namespace/name" format
+	RemovedServices []*NodeServiceInfo     `protobuf:"bytes,2,rep,name=removed_services,json=removedServices,proto3" json:"removed_services,omitempty"` // ServiceIDs in "namespace/name" format
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -437,14 +554,14 @@ func (*UpdateNodeServicesRequest) Descriptor() ([]byte, []int) {
 	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *UpdateNodeServicesRequest) GetAddedServices() []string {
+func (x *UpdateNodeServicesRequest) GetAddedServices() []*NodeServiceInfo {
 	if x != nil {
 		return x.AddedServices
 	}
 	return nil
 }
 
-func (x *UpdateNodeServicesRequest) GetRemovedServices() []string {
+func (x *UpdateNodeServicesRequest) GetRemovedServices() []*NodeServiceInfo {
 	if x != nil {
 		return x.RemovedServices
 	}
@@ -511,6 +628,110 @@ func (x *DrainRequest) GetEndpointAddress() string {
 	return ""
 }
 
+type DrainNodeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DrainNodeRequest) Reset() {
+	*x = DrainNodeRequest{}
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DrainNodeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DrainNodeRequest) ProtoMessage() {}
+
+func (x *DrainNodeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DrainNodeRequest.ProtoReflect.Descriptor instead.
+func (*DrainNodeRequest) Descriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{5}
+}
+
+type NodeServiceInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Id            string                 `protobuf:"bytes,3,opt,name=id,proto3" json:"id,omitempty"`
+	Labels        map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeServiceInfo) Reset() {
+	*x = NodeServiceInfo{}
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeServiceInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeServiceInfo) ProtoMessage() {}
+
+func (x *NodeServiceInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeServiceInfo.ProtoReflect.Descriptor instead.
+func (*NodeServiceInfo) Descriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *NodeServiceInfo) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *NodeServiceInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *NodeServiceInfo) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *NodeServiceInfo) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
 type AgentStreamResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
@@ -525,7 +746,7 @@ type AgentStreamResponse struct {
 
 func (x *AgentStreamResponse) Reset() {
 	*x = AgentStreamResponse{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[5]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -537,7 +758,7 @@ func (x *AgentStreamResponse) String() string {
 func (*AgentStreamResponse) ProtoMessage() {}
 
 func (x *AgentStreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[5]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -550,7 +771,7 @@ func (x *AgentStreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentStreamResponse.ProtoReflect.Descriptor instead.
 func (*AgentStreamResponse) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{5}
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AgentStreamResponse) GetPayload() isAgentStreamResponse_Payload {
@@ -621,7 +842,7 @@ type ScopeSnapshot struct {
 
 func (x *ScopeSnapshot) Reset() {
 	*x = ScopeSnapshot{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[6]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -633,7 +854,7 @@ func (x *ScopeSnapshot) String() string {
 func (*ScopeSnapshot) ProtoMessage() {}
 
 func (x *ScopeSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[6]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -646,7 +867,7 @@ func (x *ScopeSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScopeSnapshot.ProtoReflect.Descriptor instead.
 func (*ScopeSnapshot) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{6}
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ScopeSnapshot) GetServices() []*ServiceInfo {
@@ -689,7 +910,7 @@ type ScopeUpdate struct {
 
 func (x *ScopeUpdate) Reset() {
 	*x = ScopeUpdate{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[7]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -701,7 +922,7 @@ func (x *ScopeUpdate) String() string {
 func (*ScopeUpdate) ProtoMessage() {}
 
 func (x *ScopeUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[7]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -714,7 +935,7 @@ func (x *ScopeUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScopeUpdate.ProtoReflect.Descriptor instead.
 func (*ScopeUpdate) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{7}
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ScopeUpdate) GetType() ScopeUpdateType {
@@ -754,7 +975,7 @@ type RouteUpdate struct {
 
 func (x *RouteUpdate) Reset() {
 	*x = RouteUpdate{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[8]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -766,7 +987,7 @@ func (x *RouteUpdate) String() string {
 func (*RouteUpdate) ProtoMessage() {}
 
 func (x *RouteUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[8]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -779,7 +1000,7 @@ func (x *RouteUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RouteUpdate.ProtoReflect.Descriptor instead.
 func (*RouteUpdate) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{8}
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *RouteUpdate) GetRoutes() []*RouteInfo {
@@ -796,14 +1017,13 @@ type ServiceInfo struct {
 	Protocol      string                 `protobuf:"bytes,3,opt,name=protocol,proto3" json:"protocol,omitempty"`
 	MeshAddr      string                 `protobuf:"bytes,4,opt,name=mesh_addr,json=meshAddr,proto3" json:"mesh_addr,omitempty"`
 	Port          int32                  `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`
-	Endpoints     []*EndpointInfo        `protobuf:"bytes,6,rep,name=endpoints,proto3" json:"endpoints,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ServiceInfo) Reset() {
 	*x = ServiceInfo{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[9]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -815,7 +1035,7 @@ func (x *ServiceInfo) String() string {
 func (*ServiceInfo) ProtoMessage() {}
 
 func (x *ServiceInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[9]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -828,7 +1048,7 @@ func (x *ServiceInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceInfo.ProtoReflect.Descriptor instead.
 func (*ServiceInfo) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{9}
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ServiceInfo) GetNamespace() string {
@@ -866,86 +1086,18 @@ func (x *ServiceInfo) GetPort() int32 {
 	return 0
 }
 
-func (x *ServiceInfo) GetEndpoints() []*EndpointInfo {
-	if x != nil {
-		return x.Endpoints
-	}
-	return nil
-}
-
-type EndpointInfo struct {
+type RouteInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-	Weight        int32                  `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
-	Health        EndpointHealthStatus   `protobuf:"varint,3,opt,name=health,proto3,enum=omnimesh.v1.EndpointHealthStatus" json:"health,omitempty"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	ServiceName   string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	TargetNodes   []*NodeEndpointInfo    `protobuf:"bytes,4,rep,name=target_nodes,json=targetNodes,proto3" json:"target_nodes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *EndpointInfo) Reset() {
-	*x = EndpointInfo{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *EndpointInfo) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EndpointInfo) ProtoMessage() {}
-
-func (x *EndpointInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EndpointInfo.ProtoReflect.Descriptor instead.
-func (*EndpointInfo) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *EndpointInfo) GetAddress() string {
-	if x != nil {
-		return x.Address
-	}
-	return ""
-}
-
-func (x *EndpointInfo) GetWeight() int32 {
-	if x != nil {
-		return x.Weight
-	}
-	return 0
-}
-
-func (x *EndpointInfo) GetHealth() EndpointHealthStatus {
-	if x != nil {
-		return x.Health
-	}
-	return EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNSPECIFIED
-}
-
-type RouteInfo struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	ServiceNamespace string                 `protobuf:"bytes,1,opt,name=service_namespace,json=serviceNamespace,proto3" json:"service_namespace,omitempty"`
-	ServiceName      string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
-	MeshAddr         string                 `protobuf:"bytes,3,opt,name=mesh_addr,json=meshAddr,proto3" json:"mesh_addr,omitempty"`
-	TargetNodes      []*NodeEndpointInfo    `protobuf:"bytes,4,rep,name=target_nodes,json=targetNodes,proto3" json:"target_nodes,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
-}
-
 func (x *RouteInfo) Reset() {
 	*x = RouteInfo{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[11]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -957,7 +1109,7 @@ func (x *RouteInfo) String() string {
 func (*RouteInfo) ProtoMessage() {}
 
 func (x *RouteInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[11]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -970,12 +1122,12 @@ func (x *RouteInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RouteInfo.ProtoReflect.Descriptor instead.
 func (*RouteInfo) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{11}
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{12}
 }
 
-func (x *RouteInfo) GetServiceNamespace() string {
+func (x *RouteInfo) GetNamespace() string {
 	if x != nil {
-		return x.ServiceNamespace
+		return x.Namespace
 	}
 	return ""
 }
@@ -983,13 +1135,6 @@ func (x *RouteInfo) GetServiceNamespace() string {
 func (x *RouteInfo) GetServiceName() string {
 	if x != nil {
 		return x.ServiceName
-	}
-	return ""
-}
-
-func (x *RouteInfo) GetMeshAddr() string {
-	if x != nil {
-		return x.MeshAddr
 	}
 	return ""
 }
@@ -1005,15 +1150,14 @@ type NodeEndpointInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	Addr          string                 `protobuf:"bytes,2,opt,name=addr,proto3" json:"addr,omitempty"`
-	Target        string                 `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
-	Labels        map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Labels        map[string]string      `protobuf:"bytes,3,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *NodeEndpointInfo) Reset() {
 	*x = NodeEndpointInfo{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[12]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1025,7 +1169,7 @@ func (x *NodeEndpointInfo) String() string {
 func (*NodeEndpointInfo) ProtoMessage() {}
 
 func (x *NodeEndpointInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[12]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1038,7 +1182,7 @@ func (x *NodeEndpointInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeEndpointInfo.ProtoReflect.Descriptor instead.
 func (*NodeEndpointInfo) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{12}
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *NodeEndpointInfo) GetNodeId() string {
@@ -1055,13 +1199,6 @@ func (x *NodeEndpointInfo) GetAddr() string {
 	return ""
 }
 
-func (x *NodeEndpointInfo) GetTarget() string {
-	if x != nil {
-		return x.Target
-	}
-	return ""
-}
-
 func (x *NodeEndpointInfo) GetLabels() map[string]string {
 	if x != nil {
 		return x.Labels
@@ -1070,19 +1207,24 @@ func (x *NodeEndpointInfo) GetLabels() map[string]string {
 }
 
 type TrafficPolicyInfo struct {
-	state                  protoimpl.MessageState `protogen:"open.v1"`
-	Name                   string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Namespace              string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	TargetServiceNamespace string                 `protobuf:"bytes,3,opt,name=target_service_namespace,json=targetServiceNamespace,proto3" json:"target_service_namespace,omitempty"`
-	TargetServiceName      string                 `protobuf:"bytes,4,opt,name=target_service_name,json=targetServiceName,proto3" json:"target_service_name,omitempty"`
-	Spec                   []byte                 `protobuf:"bytes,5,opt,name=spec,proto3" json:"spec,omitempty"` // JSON-encoded policy spec
+	state                  protoimpl.MessageState      `protogen:"open.v1"`
+	Name                   string                      `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Namespace              string                      `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	TargetServiceNamespace string                      `protobuf:"bytes,3,opt,name=target_service_namespace,json=targetServiceNamespace,proto3" json:"target_service_namespace,omitempty"`
+	TargetServiceName      string                      `protobuf:"bytes,4,opt,name=target_service_name,json=targetServiceName,proto3" json:"target_service_name,omitempty"`
+	Retry                  *RetryPolicyInfo            `protobuf:"bytes,5,opt,name=retry,proto3" json:"retry,omitempty"`
+	CircuitBreaker         *CircuitBreakerPolicyInfo   `protobuf:"bytes,6,opt,name=circuit_breaker,json=circuitBreaker,proto3" json:"circuit_breaker,omitempty"`
+	RateLimiter            *RateLimitPolicyInfo        `protobuf:"bytes,7,opt,name=rate_limiter,json=rateLimiter,proto3" json:"rate_limiter,omitempty"`
+	LoadBalancer           *LoadBalancerPolicyInfo     `protobuf:"bytes,8,opt,name=load_balancer,json=loadBalancer,proto3" json:"load_balancer,omitempty"`
+	OutlierDetection       *OutlierDetectionPolicyInfo `protobuf:"bytes,9,opt,name=outlier_detection,json=outlierDetection,proto3" json:"outlier_detection,omitempty"`
+	Routes                 []*TrafficRouteInfo         `protobuf:"bytes,10,rep,name=routes,proto3" json:"routes,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
 
 func (x *TrafficPolicyInfo) Reset() {
 	*x = TrafficPolicyInfo{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[13]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1094,7 +1236,7 @@ func (x *TrafficPolicyInfo) String() string {
 func (*TrafficPolicyInfo) ProtoMessage() {}
 
 func (x *TrafficPolicyInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[13]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1107,7 +1249,7 @@ func (x *TrafficPolicyInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficPolicyInfo.ProtoReflect.Descriptor instead.
 func (*TrafficPolicyInfo) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{13}
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *TrafficPolicyInfo) GetName() string {
@@ -1138,11 +1280,469 @@ func (x *TrafficPolicyInfo) GetTargetServiceName() string {
 	return ""
 }
 
-func (x *TrafficPolicyInfo) GetSpec() []byte {
+func (x *TrafficPolicyInfo) GetRetry() *RetryPolicyInfo {
 	if x != nil {
-		return x.Spec
+		return x.Retry
 	}
 	return nil
+}
+
+func (x *TrafficPolicyInfo) GetCircuitBreaker() *CircuitBreakerPolicyInfo {
+	if x != nil {
+		return x.CircuitBreaker
+	}
+	return nil
+}
+
+func (x *TrafficPolicyInfo) GetRateLimiter() *RateLimitPolicyInfo {
+	if x != nil {
+		return x.RateLimiter
+	}
+	return nil
+}
+
+func (x *TrafficPolicyInfo) GetLoadBalancer() *LoadBalancerPolicyInfo {
+	if x != nil {
+		return x.LoadBalancer
+	}
+	return nil
+}
+
+func (x *TrafficPolicyInfo) GetOutlierDetection() *OutlierDetectionPolicyInfo {
+	if x != nil {
+		return x.OutlierDetection
+	}
+	return nil
+}
+
+func (x *TrafficPolicyInfo) GetRoutes() []*TrafficRouteInfo {
+	if x != nil {
+		return x.Routes
+	}
+	return nil
+}
+
+type RetryPolicyInfo struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	MaxRetries int32                  `protobuf:"varint,1,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`
+	RetryOn    []string               `protobuf:"bytes,2,rep,name=retry_on,json=retryOn,proto3" json:"retry_on,omitempty"`
+	// backoff_base_ms is the initial backoff duration in milliseconds.
+	BackoffBaseMs int64 `protobuf:"varint,3,opt,name=backoff_base_ms,json=backoffBaseMs,proto3" json:"backoff_base_ms,omitempty"`
+	// backoff_max_ms is the maximum backoff duration in milliseconds.
+	BackoffMaxMs  int64 `protobuf:"varint,4,opt,name=backoff_max_ms,json=backoffMaxMs,proto3" json:"backoff_max_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetryPolicyInfo) Reset() {
+	*x = RetryPolicyInfo{}
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetryPolicyInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetryPolicyInfo) ProtoMessage() {}
+
+func (x *RetryPolicyInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetryPolicyInfo.ProtoReflect.Descriptor instead.
+func (*RetryPolicyInfo) Descriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *RetryPolicyInfo) GetMaxRetries() int32 {
+	if x != nil {
+		return x.MaxRetries
+	}
+	return 0
+}
+
+func (x *RetryPolicyInfo) GetRetryOn() []string {
+	if x != nil {
+		return x.RetryOn
+	}
+	return nil
+}
+
+func (x *RetryPolicyInfo) GetBackoffBaseMs() int64 {
+	if x != nil {
+		return x.BackoffBaseMs
+	}
+	return 0
+}
+
+func (x *RetryPolicyInfo) GetBackoffMaxMs() int64 {
+	if x != nil {
+		return x.BackoffMaxMs
+	}
+	return 0
+}
+
+type CircuitBreakerPolicyInfo struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	FailureThreshold int32                  `protobuf:"varint,1,opt,name=failure_threshold,json=failureThreshold,proto3" json:"failure_threshold,omitempty"`
+	// failure_window_ms is the rolling failure-counting window in milliseconds.
+	FailureWindowMs int64 `protobuf:"varint,2,opt,name=failure_window_ms,json=failureWindowMs,proto3" json:"failure_window_ms,omitempty"`
+	// half_open_after_ms is the time after which a tripped circuit transitions
+	// to half-open, in milliseconds.
+	HalfOpenAfterMs int64 `protobuf:"varint,3,opt,name=half_open_after_ms,json=halfOpenAfterMs,proto3" json:"half_open_after_ms,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *CircuitBreakerPolicyInfo) Reset() {
+	*x = CircuitBreakerPolicyInfo{}
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CircuitBreakerPolicyInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CircuitBreakerPolicyInfo) ProtoMessage() {}
+
+func (x *CircuitBreakerPolicyInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CircuitBreakerPolicyInfo.ProtoReflect.Descriptor instead.
+func (*CircuitBreakerPolicyInfo) Descriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *CircuitBreakerPolicyInfo) GetFailureThreshold() int32 {
+	if x != nil {
+		return x.FailureThreshold
+	}
+	return 0
+}
+
+func (x *CircuitBreakerPolicyInfo) GetFailureWindowMs() int64 {
+	if x != nil {
+		return x.FailureWindowMs
+	}
+	return 0
+}
+
+func (x *CircuitBreakerPolicyInfo) GetHalfOpenAfterMs() int64 {
+	if x != nil {
+		return x.HalfOpenAfterMs
+	}
+	return 0
+}
+
+type RateLimitPolicyInfo struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	RequestsPerSecond     int32                  `protobuf:"varint,1,opt,name=requests_per_second,json=requestsPerSecond,proto3" json:"requests_per_second,omitempty"`
+	BurstSize             int32                  `protobuf:"varint,2,opt,name=burst_size,json=burstSize,proto3" json:"burst_size,omitempty"`
+	MaxConcurrentRequests int32                  `protobuf:"varint,3,opt,name=max_concurrent_requests,json=maxConcurrentRequests,proto3" json:"max_concurrent_requests,omitempty"`
+	LimitExceededAction   RateLimitAction        `protobuf:"varint,4,opt,name=limit_exceeded_action,json=limitExceededAction,proto3,enum=omnimesh.v1.RateLimitAction" json:"limit_exceeded_action,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *RateLimitPolicyInfo) Reset() {
+	*x = RateLimitPolicyInfo{}
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RateLimitPolicyInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RateLimitPolicyInfo) ProtoMessage() {}
+
+func (x *RateLimitPolicyInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RateLimitPolicyInfo.ProtoReflect.Descriptor instead.
+func (*RateLimitPolicyInfo) Descriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *RateLimitPolicyInfo) GetRequestsPerSecond() int32 {
+	if x != nil {
+		return x.RequestsPerSecond
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyInfo) GetBurstSize() int32 {
+	if x != nil {
+		return x.BurstSize
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyInfo) GetMaxConcurrentRequests() int32 {
+	if x != nil {
+		return x.MaxConcurrentRequests
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyInfo) GetLimitExceededAction() RateLimitAction {
+	if x != nil {
+		return x.LimitExceededAction
+	}
+	return RateLimitAction_RATE_LIMIT_ACTION_UNSPECIFIED
+}
+
+type LoadBalancerPolicyInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Algorithm     LoadBalancerAlgorithm  `protobuf:"varint,1,opt,name=algorithm,proto3,enum=omnimesh.v1.LoadBalancerAlgorithm" json:"algorithm,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoadBalancerPolicyInfo) Reset() {
+	*x = LoadBalancerPolicyInfo{}
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoadBalancerPolicyInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoadBalancerPolicyInfo) ProtoMessage() {}
+
+func (x *LoadBalancerPolicyInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoadBalancerPolicyInfo.ProtoReflect.Descriptor instead.
+func (*LoadBalancerPolicyInfo) Descriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *LoadBalancerPolicyInfo) GetAlgorithm() LoadBalancerAlgorithm {
+	if x != nil {
+		return x.Algorithm
+	}
+	return LoadBalancerAlgorithm_LOAD_BALANCER_ALGORITHM_UNSPECIFIED
+}
+
+type OutlierDetectionPolicyInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// error_rate_threshold is the fraction of errors above which an endpoint is
+	// ejected (e.g. 0.5 = 50%).
+	ErrorRateThreshold float64 `protobuf:"fixed64,1,opt,name=error_rate_threshold,json=errorRateThreshold,proto3" json:"error_rate_threshold,omitempty"`
+	MinReportingAgents int32   `protobuf:"varint,2,opt,name=min_reporting_agents,json=minReportingAgents,proto3" json:"min_reporting_agents,omitempty"`
+	// ejection_duration_ms is how long an endpoint stays ejected, in milliseconds.
+	EjectionDurationMs int64 `protobuf:"varint,3,opt,name=ejection_duration_ms,json=ejectionDurationMs,proto3" json:"ejection_duration_ms,omitempty"`
+	// max_ejection_percent is the maximum percentage of endpoints that can be
+	// ejected simultaneously (0–100).
+	MaxEjectionPercent float64 `protobuf:"fixed64,4,opt,name=max_ejection_percent,json=maxEjectionPercent,proto3" json:"max_ejection_percent,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *OutlierDetectionPolicyInfo) Reset() {
+	*x = OutlierDetectionPolicyInfo{}
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OutlierDetectionPolicyInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OutlierDetectionPolicyInfo) ProtoMessage() {}
+
+func (x *OutlierDetectionPolicyInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OutlierDetectionPolicyInfo.ProtoReflect.Descriptor instead.
+func (*OutlierDetectionPolicyInfo) Descriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *OutlierDetectionPolicyInfo) GetErrorRateThreshold() float64 {
+	if x != nil {
+		return x.ErrorRateThreshold
+	}
+	return 0
+}
+
+func (x *OutlierDetectionPolicyInfo) GetMinReportingAgents() int32 {
+	if x != nil {
+		return x.MinReportingAgents
+	}
+	return 0
+}
+
+func (x *OutlierDetectionPolicyInfo) GetEjectionDurationMs() int64 {
+	if x != nil {
+		return x.EjectionDurationMs
+	}
+	return 0
+}
+
+func (x *OutlierDetectionPolicyInfo) GetMaxEjectionPercent() float64 {
+	if x != nil {
+		return x.MaxEjectionPercent
+	}
+	return 0
+}
+
+type TrafficRouteDestinationInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// target is the NetworkTarget identifier; empty means any target.
+	Target        string            `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
+	Labels        map[string]string `protobuf:"bytes,2,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TrafficRouteDestinationInfo) Reset() {
+	*x = TrafficRouteDestinationInfo{}
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TrafficRouteDestinationInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrafficRouteDestinationInfo) ProtoMessage() {}
+
+func (x *TrafficRouteDestinationInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TrafficRouteDestinationInfo.ProtoReflect.Descriptor instead.
+func (*TrafficRouteDestinationInfo) Descriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *TrafficRouteDestinationInfo) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *TrafficRouteDestinationInfo) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+type TrafficRouteInfo struct {
+	state         protoimpl.MessageState       `protogen:"open.v1"`
+	Destination   *TrafficRouteDestinationInfo `protobuf:"bytes,1,opt,name=destination,proto3" json:"destination,omitempty"`
+	Weight        int32                        `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TrafficRouteInfo) Reset() {
+	*x = TrafficRouteInfo{}
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TrafficRouteInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrafficRouteInfo) ProtoMessage() {}
+
+func (x *TrafficRouteInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TrafficRouteInfo.ProtoReflect.Descriptor instead.
+func (*TrafficRouteInfo) Descriptor() ([]byte, []int) {
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *TrafficRouteInfo) GetDestination() *TrafficRouteDestinationInfo {
+	if x != nil {
+		return x.Destination
+	}
+	return nil
+}
+
+func (x *TrafficRouteInfo) GetWeight() int32 {
+	if x != nil {
+		return x.Weight
+	}
+	return 0
 }
 
 type AuthzPolicyInfo struct {
@@ -1158,7 +1758,7 @@ type AuthzPolicyInfo struct {
 
 func (x *AuthzPolicyInfo) Reset() {
 	*x = AuthzPolicyInfo{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[14]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1170,7 +1770,7 @@ func (x *AuthzPolicyInfo) String() string {
 func (*AuthzPolicyInfo) ProtoMessage() {}
 
 func (x *AuthzPolicyInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[14]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1183,7 +1783,7 @@ func (x *AuthzPolicyInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthzPolicyInfo.ProtoReflect.Descriptor instead.
 func (*AuthzPolicyInfo) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{14}
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *AuthzPolicyInfo) GetName() string {
@@ -1232,7 +1832,7 @@ type SelectorInfo struct {
 
 func (x *SelectorInfo) Reset() {
 	*x = SelectorInfo{}
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[15]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1244,7 +1844,7 @@ func (x *SelectorInfo) String() string {
 func (*SelectorInfo) ProtoMessage() {}
 
 func (x *SelectorInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_omnimesh_v1_agent_proto_msgTypes[15]
+	mi := &file_omnimesh_v1_agent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1257,7 +1857,7 @@ func (x *SelectorInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SelectorInfo.ProtoReflect.Descriptor instead.
 func (*SelectorInfo) Descriptor() ([]byte, []int) {
-	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{15}
+	return file_omnimesh_v1_agent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *SelectorInfo) GetNamespace() string {
@@ -1285,37 +1885,49 @@ var File_omnimesh_v1_agent_proto protoreflect.FileDescriptor
 
 const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x17omnimesh/v1/agent.proto\x12\vomnimesh.v1\"\xc8\x02\n" +
+	"\x17omnimesh/v1/agent.proto\x12\vomnimesh.v1\"\x88\x03\n" +
 	"\x12AgentStreamRequest\x12G\n" +
 	"\rregister_node\x18\x01 \x01(\v2 .omnimesh.v1.RegisterNodeRequestH\x00R\fregisterNode\x12@\n" +
 	"\rhealth_report\x18\x02 \x01(\v2\x19.omnimesh.v1.HealthReportH\x00R\fhealthReport\x12@\n" +
 	"\rdrain_request\x18\x03 \x01(\v2\x19.omnimesh.v1.DrainRequestH\x00R\fdrainRequest\x12Z\n" +
-	"\x14update_node_services\x18\x04 \x01(\v2&.omnimesh.v1.UpdateNodeServicesRequestH\x00R\x12updateNodeServicesB\t\n" +
-	"\apayload\"\x93\x02\n" +
+	"\x14update_node_services\x18\x04 \x01(\v2&.omnimesh.v1.UpdateNodeServicesRequestH\x00R\x12updateNodeServices\x12>\n" +
+	"\n" +
+	"drain_node\x18\x05 \x01(\v2\x1d.omnimesh.v1.DrainNodeRequestH\x00R\tdrainNodeB\t\n" +
+	"\apayload\"\xb1\x02\n" +
 	"\x13RegisterNodeRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1a\n" +
 	"\bplatform\x18\x02 \x01(\tR\bplatform\x12\x12\n" +
 	"\x04addr\x18\x03 \x01(\tR\x04addr\x12D\n" +
-	"\x06labels\x18\x04 \x03(\v2,.omnimesh.v1.RegisterNodeRequest.LabelsEntryR\x06labels\x12\x1a\n" +
-	"\bservices\x18\x05 \x03(\tR\bservices\x12\x16\n" +
+	"\x06labels\x18\x04 \x03(\v2,.omnimesh.v1.RegisterNodeRequest.LabelsEntryR\x06labels\x128\n" +
+	"\bservices\x18\x05 \x03(\v2\x1c.omnimesh.v1.NodeServiceInfoR\bservices\x12\x16\n" +
 	"\x06target\x18\x06 \x01(\tR\x06target\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe3\x01\n" +
-	"\fHealthReport\x12+\n" +
-	"\x11service_namespace\x18\x01 \x01(\tR\x10serviceNamespace\x12!\n" +
-	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12)\n" +
-	"\x10endpoint_address\x18\x03 \x01(\tR\x0fendpointAddress\x129\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xca\x01\n" +
+	"\fHealthReport\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12!\n" +
+	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1f\n" +
+	"\vendpoint_id\x18\x03 \x01(\tR\n" +
+	"endpointId\x129\n" +
 	"\x06status\x18\x04 \x01(\x0e2!.omnimesh.v1.EndpointHealthStatusR\x06status\x12\x1d\n" +
 	"\n" +
-	"probe_type\x18\x05 \x01(\tR\tprobeType\"m\n" +
-	"\x19UpdateNodeServicesRequest\x12%\n" +
-	"\x0eadded_services\x18\x01 \x03(\tR\raddedServices\x12)\n" +
-	"\x10removed_services\x18\x02 \x03(\tR\x0fremovedServices\"\x89\x01\n" +
+	"probe_type\x18\x05 \x01(\tR\tprobeType\"\xa9\x01\n" +
+	"\x19UpdateNodeServicesRequest\x12C\n" +
+	"\x0eadded_services\x18\x01 \x03(\v2\x1c.omnimesh.v1.NodeServiceInfoR\raddedServices\x12G\n" +
+	"\x10removed_services\x18\x02 \x03(\v2\x1c.omnimesh.v1.NodeServiceInfoR\x0fremovedServices\"\x89\x01\n" +
 	"\fDrainRequest\x12+\n" +
 	"\x11service_namespace\x18\x01 \x01(\tR\x10serviceNamespace\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12)\n" +
-	"\x10endpoint_address\x18\x03 \x01(\tR\x0fendpointAddress\"\xe3\x01\n" +
+	"\x10endpoint_address\x18\x03 \x01(\tR\x0fendpointAddress\"\x12\n" +
+	"\x10DrainNodeRequest\"\xd0\x01\n" +
+	"\x0fNodeServiceInfo\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x0e\n" +
+	"\x02id\x18\x03 \x01(\tR\x02id\x12@\n" +
+	"\x06labels\x18\x04 \x03(\v2(.omnimesh.v1.NodeServiceInfo.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe3\x01\n" +
 	"\x13AgentStreamResponse\x12C\n" +
 	"\x0escope_snapshot\x18\x01 \x01(\v2\x1a.omnimesh.v1.ScopeSnapshotH\x00R\rscopeSnapshot\x12=\n" +
 	"\fscope_update\x18\x02 \x01(\v2\x18.omnimesh.v1.ScopeUpdateH\x00R\vscopeUpdate\x12=\n" +
@@ -1332,37 +1944,68 @@ const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"\x06routes\x18\x03 \x03(\v2\x16.omnimesh.v1.RouteInfoR\x06routes\x12I\n" +
 	"\x10traffic_policies\x18\x04 \x03(\v2\x1e.omnimesh.v1.TrafficPolicyInfoR\x0ftrafficPolicies\"=\n" +
 	"\vRouteUpdate\x12.\n" +
-	"\x06routes\x18\x01 \x03(\v2\x16.omnimesh.v1.RouteInfoR\x06routes\"\xc5\x01\n" +
+	"\x06routes\x18\x01 \x03(\v2\x16.omnimesh.v1.RouteInfoR\x06routes\"\x8c\x01\n" +
 	"\vServiceInfo\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprotocol\x18\x03 \x01(\tR\bprotocol\x12\x1b\n" +
 	"\tmesh_addr\x18\x04 \x01(\tR\bmeshAddr\x12\x12\n" +
-	"\x04port\x18\x05 \x01(\x05R\x04port\x127\n" +
-	"\tendpoints\x18\x06 \x03(\v2\x19.omnimesh.v1.EndpointInfoR\tendpoints\"{\n" +
-	"\fEndpointInfo\x12\x18\n" +
-	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x16\n" +
-	"\x06weight\x18\x02 \x01(\x05R\x06weight\x129\n" +
-	"\x06health\x18\x03 \x01(\x0e2!.omnimesh.v1.EndpointHealthStatusR\x06health\"\xba\x01\n" +
-	"\tRouteInfo\x12+\n" +
-	"\x11service_namespace\x18\x01 \x01(\tR\x10serviceNamespace\x12!\n" +
-	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1b\n" +
-	"\tmesh_addr\x18\x03 \x01(\tR\bmeshAddr\x12@\n" +
-	"\ftarget_nodes\x18\x04 \x03(\v2\x1d.omnimesh.v1.NodeEndpointInfoR\vtargetNodes\"\xd5\x01\n" +
+	"\x04port\x18\x05 \x01(\x05R\x04port\"\x8e\x01\n" +
+	"\tRouteInfo\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12!\n" +
+	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12@\n" +
+	"\ftarget_nodes\x18\x04 \x03(\v2\x1d.omnimesh.v1.NodeEndpointInfoR\vtargetNodes\"\xbd\x01\n" +
 	"\x10NodeEndpointInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x12\n" +
-	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x16\n" +
-	"\x06target\x18\x03 \x01(\tR\x06target\x12A\n" +
-	"\x06labels\x18\x04 \x03(\v2).omnimesh.v1.NodeEndpointInfo.LabelsEntryR\x06labels\x1a9\n" +
+	"\x04addr\x18\x02 \x01(\tR\x04addr\x12A\n" +
+	"\x06labels\x18\x03 \x03(\v2).omnimesh.v1.NodeEndpointInfo.LabelsEntryR\x06labels\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc3\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcf\x04\n" +
 	"\x11TrafficPolicyInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x128\n" +
 	"\x18target_service_namespace\x18\x03 \x01(\tR\x16targetServiceNamespace\x12.\n" +
-	"\x13target_service_name\x18\x04 \x01(\tR\x11targetServiceName\x12\x12\n" +
-	"\x04spec\x18\x05 \x01(\fR\x04spec\"\xcb\x01\n" +
+	"\x13target_service_name\x18\x04 \x01(\tR\x11targetServiceName\x122\n" +
+	"\x05retry\x18\x05 \x01(\v2\x1c.omnimesh.v1.RetryPolicyInfoR\x05retry\x12N\n" +
+	"\x0fcircuit_breaker\x18\x06 \x01(\v2%.omnimesh.v1.CircuitBreakerPolicyInfoR\x0ecircuitBreaker\x12C\n" +
+	"\frate_limiter\x18\a \x01(\v2 .omnimesh.v1.RateLimitPolicyInfoR\vrateLimiter\x12H\n" +
+	"\rload_balancer\x18\b \x01(\v2#.omnimesh.v1.LoadBalancerPolicyInfoR\floadBalancer\x12T\n" +
+	"\x11outlier_detection\x18\t \x01(\v2'.omnimesh.v1.OutlierDetectionPolicyInfoR\x10outlierDetection\x125\n" +
+	"\x06routes\x18\n" +
+	" \x03(\v2\x1d.omnimesh.v1.TrafficRouteInfoR\x06routes\"\x9b\x01\n" +
+	"\x0fRetryPolicyInfo\x12\x1f\n" +
+	"\vmax_retries\x18\x01 \x01(\x05R\n" +
+	"maxRetries\x12\x19\n" +
+	"\bretry_on\x18\x02 \x03(\tR\aretryOn\x12&\n" +
+	"\x0fbackoff_base_ms\x18\x03 \x01(\x03R\rbackoffBaseMs\x12$\n" +
+	"\x0ebackoff_max_ms\x18\x04 \x01(\x03R\fbackoffMaxMs\"\xa0\x01\n" +
+	"\x18CircuitBreakerPolicyInfo\x12+\n" +
+	"\x11failure_threshold\x18\x01 \x01(\x05R\x10failureThreshold\x12*\n" +
+	"\x11failure_window_ms\x18\x02 \x01(\x03R\x0ffailureWindowMs\x12+\n" +
+	"\x12half_open_after_ms\x18\x03 \x01(\x03R\x0fhalfOpenAfterMs\"\xee\x01\n" +
+	"\x13RateLimitPolicyInfo\x12.\n" +
+	"\x13requests_per_second\x18\x01 \x01(\x05R\x11requestsPerSecond\x12\x1d\n" +
+	"\n" +
+	"burst_size\x18\x02 \x01(\x05R\tburstSize\x126\n" +
+	"\x17max_concurrent_requests\x18\x03 \x01(\x05R\x15maxConcurrentRequests\x12P\n" +
+	"\x15limit_exceeded_action\x18\x04 \x01(\x0e2\x1c.omnimesh.v1.RateLimitActionR\x13limitExceededAction\"Z\n" +
+	"\x16LoadBalancerPolicyInfo\x12@\n" +
+	"\talgorithm\x18\x01 \x01(\x0e2\".omnimesh.v1.LoadBalancerAlgorithmR\talgorithm\"\xe4\x01\n" +
+	"\x1aOutlierDetectionPolicyInfo\x120\n" +
+	"\x14error_rate_threshold\x18\x01 \x01(\x01R\x12errorRateThreshold\x120\n" +
+	"\x14min_reporting_agents\x18\x02 \x01(\x05R\x12minReportingAgents\x120\n" +
+	"\x14ejection_duration_ms\x18\x03 \x01(\x03R\x12ejectionDurationMs\x120\n" +
+	"\x14max_ejection_percent\x18\x04 \x01(\x01R\x12maxEjectionPercent\"\xbe\x01\n" +
+	"\x1bTrafficRouteDestinationInfo\x12\x16\n" +
+	"\x06target\x18\x01 \x01(\tR\x06target\x12L\n" +
+	"\x06labels\x18\x02 \x03(\v24.omnimesh.v1.TrafficRouteDestinationInfo.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"v\n" +
+	"\x10TrafficRouteInfo\x12J\n" +
+	"\vdestination\x18\x01 \x01(\v2(.omnimesh.v1.TrafficRouteDestinationInfoR\vdestination\x12\x16\n" +
+	"\x06weight\x18\x02 \x01(\x05R\x06weight\"\xcb\x01\n" +
 	"\x0fAuthzPolicyInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x16\n" +
@@ -1385,7 +2028,16 @@ const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"\x1dSCOPE_UPDATE_TYPE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15SCOPE_UPDATE_TYPE_ADD\x10\x01\x12\x1c\n" +
 	"\x18SCOPE_UPDATE_TYPE_MODIFY\x10\x02\x12\x1c\n" +
-	"\x18SCOPE_UPDATE_TYPE_REMOVE\x10\x032d\n" +
+	"\x18SCOPE_UPDATE_TYPE_REMOVE\x10\x03*o\n" +
+	"\x0fRateLimitAction\x12!\n" +
+	"\x1dRATE_LIMIT_ACTION_UNSPECIFIED\x10\x00\x12\x1c\n" +
+	"\x18RATE_LIMIT_ACTION_REJECT\x10\x01\x12\x1b\n" +
+	"\x17RATE_LIMIT_ACTION_QUEUE\x10\x02*\xc5\x01\n" +
+	"\x15LoadBalancerAlgorithm\x12'\n" +
+	"#LOAD_BALANCER_ALGORITHM_UNSPECIFIED\x10\x00\x120\n" +
+	",LOAD_BALANCER_ALGORITHM_WEIGHTED_ROUND_ROBIN\x10\x01\x12-\n" +
+	")LOAD_BALANCER_ALGORITHM_LEAST_CONNECTIONS\x10\x02\x12\"\n" +
+	"\x1eLOAD_BALANCER_ALGORITHM_RANDOM\x10\x032d\n" +
 	"\fAgentService\x12T\n" +
 	"\vAgentStream\x12\x1f.omnimesh.v1.AgentStreamRequest\x1a .omnimesh.v1.AgentStreamResponse(\x010\x01BDZBgithub.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1;omnimeshv1b\x06proto3"
 
@@ -1401,64 +2053,89 @@ func file_omnimesh_v1_agent_proto_rawDescGZIP() []byte {
 	return file_omnimesh_v1_agent_proto_rawDescData
 }
 
-var file_omnimesh_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_omnimesh_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_omnimesh_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_omnimesh_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_omnimesh_v1_agent_proto_goTypes = []any{
-	(EndpointHealthStatus)(0),         // 0: omnimesh.v1.EndpointHealthStatus
-	(ScopeUpdateType)(0),              // 1: omnimesh.v1.ScopeUpdateType
-	(*AgentStreamRequest)(nil),        // 2: omnimesh.v1.AgentStreamRequest
-	(*RegisterNodeRequest)(nil),       // 3: omnimesh.v1.RegisterNodeRequest
-	(*HealthReport)(nil),              // 4: omnimesh.v1.HealthReport
-	(*UpdateNodeServicesRequest)(nil), // 5: omnimesh.v1.UpdateNodeServicesRequest
-	(*DrainRequest)(nil),              // 6: omnimesh.v1.DrainRequest
-	(*AgentStreamResponse)(nil),       // 7: omnimesh.v1.AgentStreamResponse
-	(*ScopeSnapshot)(nil),             // 8: omnimesh.v1.ScopeSnapshot
-	(*ScopeUpdate)(nil),               // 9: omnimesh.v1.ScopeUpdate
-	(*RouteUpdate)(nil),               // 10: omnimesh.v1.RouteUpdate
-	(*ServiceInfo)(nil),               // 11: omnimesh.v1.ServiceInfo
-	(*EndpointInfo)(nil),              // 12: omnimesh.v1.EndpointInfo
-	(*RouteInfo)(nil),                 // 13: omnimesh.v1.RouteInfo
-	(*NodeEndpointInfo)(nil),          // 14: omnimesh.v1.NodeEndpointInfo
-	(*TrafficPolicyInfo)(nil),         // 15: omnimesh.v1.TrafficPolicyInfo
-	(*AuthzPolicyInfo)(nil),           // 16: omnimesh.v1.AuthzPolicyInfo
-	(*SelectorInfo)(nil),              // 17: omnimesh.v1.SelectorInfo
-	nil,                               // 18: omnimesh.v1.RegisterNodeRequest.LabelsEntry
-	nil,                               // 19: omnimesh.v1.NodeEndpointInfo.LabelsEntry
-	nil,                               // 20: omnimesh.v1.SelectorInfo.LabelsEntry
+	(EndpointHealthStatus)(0),           // 0: omnimesh.v1.EndpointHealthStatus
+	(ScopeUpdateType)(0),                // 1: omnimesh.v1.ScopeUpdateType
+	(RateLimitAction)(0),                // 2: omnimesh.v1.RateLimitAction
+	(LoadBalancerAlgorithm)(0),          // 3: omnimesh.v1.LoadBalancerAlgorithm
+	(*AgentStreamRequest)(nil),          // 4: omnimesh.v1.AgentStreamRequest
+	(*RegisterNodeRequest)(nil),         // 5: omnimesh.v1.RegisterNodeRequest
+	(*HealthReport)(nil),                // 6: omnimesh.v1.HealthReport
+	(*UpdateNodeServicesRequest)(nil),   // 7: omnimesh.v1.UpdateNodeServicesRequest
+	(*DrainRequest)(nil),                // 8: omnimesh.v1.DrainRequest
+	(*DrainNodeRequest)(nil),            // 9: omnimesh.v1.DrainNodeRequest
+	(*NodeServiceInfo)(nil),             // 10: omnimesh.v1.NodeServiceInfo
+	(*AgentStreamResponse)(nil),         // 11: omnimesh.v1.AgentStreamResponse
+	(*ScopeSnapshot)(nil),               // 12: omnimesh.v1.ScopeSnapshot
+	(*ScopeUpdate)(nil),                 // 13: omnimesh.v1.ScopeUpdate
+	(*RouteUpdate)(nil),                 // 14: omnimesh.v1.RouteUpdate
+	(*ServiceInfo)(nil),                 // 15: omnimesh.v1.ServiceInfo
+	(*RouteInfo)(nil),                   // 16: omnimesh.v1.RouteInfo
+	(*NodeEndpointInfo)(nil),            // 17: omnimesh.v1.NodeEndpointInfo
+	(*TrafficPolicyInfo)(nil),           // 18: omnimesh.v1.TrafficPolicyInfo
+	(*RetryPolicyInfo)(nil),             // 19: omnimesh.v1.RetryPolicyInfo
+	(*CircuitBreakerPolicyInfo)(nil),    // 20: omnimesh.v1.CircuitBreakerPolicyInfo
+	(*RateLimitPolicyInfo)(nil),         // 21: omnimesh.v1.RateLimitPolicyInfo
+	(*LoadBalancerPolicyInfo)(nil),      // 22: omnimesh.v1.LoadBalancerPolicyInfo
+	(*OutlierDetectionPolicyInfo)(nil),  // 23: omnimesh.v1.OutlierDetectionPolicyInfo
+	(*TrafficRouteDestinationInfo)(nil), // 24: omnimesh.v1.TrafficRouteDestinationInfo
+	(*TrafficRouteInfo)(nil),            // 25: omnimesh.v1.TrafficRouteInfo
+	(*AuthzPolicyInfo)(nil),             // 26: omnimesh.v1.AuthzPolicyInfo
+	(*SelectorInfo)(nil),                // 27: omnimesh.v1.SelectorInfo
+	nil,                                 // 28: omnimesh.v1.RegisterNodeRequest.LabelsEntry
+	nil,                                 // 29: omnimesh.v1.NodeServiceInfo.LabelsEntry
+	nil,                                 // 30: omnimesh.v1.NodeEndpointInfo.LabelsEntry
+	nil,                                 // 31: omnimesh.v1.TrafficRouteDestinationInfo.LabelsEntry
+	nil,                                 // 32: omnimesh.v1.SelectorInfo.LabelsEntry
 }
 var file_omnimesh_v1_agent_proto_depIdxs = []int32{
-	3,  // 0: omnimesh.v1.AgentStreamRequest.register_node:type_name -> omnimesh.v1.RegisterNodeRequest
-	4,  // 1: omnimesh.v1.AgentStreamRequest.health_report:type_name -> omnimesh.v1.HealthReport
-	6,  // 2: omnimesh.v1.AgentStreamRequest.drain_request:type_name -> omnimesh.v1.DrainRequest
-	5,  // 3: omnimesh.v1.AgentStreamRequest.update_node_services:type_name -> omnimesh.v1.UpdateNodeServicesRequest
-	18, // 4: omnimesh.v1.RegisterNodeRequest.labels:type_name -> omnimesh.v1.RegisterNodeRequest.LabelsEntry
-	0,  // 5: omnimesh.v1.HealthReport.status:type_name -> omnimesh.v1.EndpointHealthStatus
-	8,  // 6: omnimesh.v1.AgentStreamResponse.scope_snapshot:type_name -> omnimesh.v1.ScopeSnapshot
-	9,  // 7: omnimesh.v1.AgentStreamResponse.scope_update:type_name -> omnimesh.v1.ScopeUpdate
-	10, // 8: omnimesh.v1.AgentStreamResponse.route_update:type_name -> omnimesh.v1.RouteUpdate
-	11, // 9: omnimesh.v1.ScopeSnapshot.services:type_name -> omnimesh.v1.ServiceInfo
-	13, // 10: omnimesh.v1.ScopeSnapshot.routes:type_name -> omnimesh.v1.RouteInfo
-	15, // 11: omnimesh.v1.ScopeSnapshot.traffic_policies:type_name -> omnimesh.v1.TrafficPolicyInfo
-	16, // 12: omnimesh.v1.ScopeSnapshot.authz_policies:type_name -> omnimesh.v1.AuthzPolicyInfo
-	1,  // 13: omnimesh.v1.ScopeUpdate.type:type_name -> omnimesh.v1.ScopeUpdateType
-	11, // 14: omnimesh.v1.ScopeUpdate.services:type_name -> omnimesh.v1.ServiceInfo
-	13, // 15: omnimesh.v1.ScopeUpdate.routes:type_name -> omnimesh.v1.RouteInfo
-	15, // 16: omnimesh.v1.ScopeUpdate.traffic_policies:type_name -> omnimesh.v1.TrafficPolicyInfo
-	13, // 17: omnimesh.v1.RouteUpdate.routes:type_name -> omnimesh.v1.RouteInfo
-	12, // 18: omnimesh.v1.ServiceInfo.endpoints:type_name -> omnimesh.v1.EndpointInfo
-	0,  // 19: omnimesh.v1.EndpointInfo.health:type_name -> omnimesh.v1.EndpointHealthStatus
-	14, // 20: omnimesh.v1.RouteInfo.target_nodes:type_name -> omnimesh.v1.NodeEndpointInfo
-	19, // 21: omnimesh.v1.NodeEndpointInfo.labels:type_name -> omnimesh.v1.NodeEndpointInfo.LabelsEntry
-	17, // 22: omnimesh.v1.AuthzPolicyInfo.source:type_name -> omnimesh.v1.SelectorInfo
-	17, // 23: omnimesh.v1.AuthzPolicyInfo.destination:type_name -> omnimesh.v1.SelectorInfo
-	20, // 24: omnimesh.v1.SelectorInfo.labels:type_name -> omnimesh.v1.SelectorInfo.LabelsEntry
-	2,  // 25: omnimesh.v1.AgentService.AgentStream:input_type -> omnimesh.v1.AgentStreamRequest
-	7,  // 26: omnimesh.v1.AgentService.AgentStream:output_type -> omnimesh.v1.AgentStreamResponse
-	26, // [26:27] is the sub-list for method output_type
-	25, // [25:26] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	5,  // 0: omnimesh.v1.AgentStreamRequest.register_node:type_name -> omnimesh.v1.RegisterNodeRequest
+	6,  // 1: omnimesh.v1.AgentStreamRequest.health_report:type_name -> omnimesh.v1.HealthReport
+	8,  // 2: omnimesh.v1.AgentStreamRequest.drain_request:type_name -> omnimesh.v1.DrainRequest
+	7,  // 3: omnimesh.v1.AgentStreamRequest.update_node_services:type_name -> omnimesh.v1.UpdateNodeServicesRequest
+	9,  // 4: omnimesh.v1.AgentStreamRequest.drain_node:type_name -> omnimesh.v1.DrainNodeRequest
+	28, // 5: omnimesh.v1.RegisterNodeRequest.labels:type_name -> omnimesh.v1.RegisterNodeRequest.LabelsEntry
+	10, // 6: omnimesh.v1.RegisterNodeRequest.services:type_name -> omnimesh.v1.NodeServiceInfo
+	0,  // 7: omnimesh.v1.HealthReport.status:type_name -> omnimesh.v1.EndpointHealthStatus
+	10, // 8: omnimesh.v1.UpdateNodeServicesRequest.added_services:type_name -> omnimesh.v1.NodeServiceInfo
+	10, // 9: omnimesh.v1.UpdateNodeServicesRequest.removed_services:type_name -> omnimesh.v1.NodeServiceInfo
+	29, // 10: omnimesh.v1.NodeServiceInfo.labels:type_name -> omnimesh.v1.NodeServiceInfo.LabelsEntry
+	12, // 11: omnimesh.v1.AgentStreamResponse.scope_snapshot:type_name -> omnimesh.v1.ScopeSnapshot
+	13, // 12: omnimesh.v1.AgentStreamResponse.scope_update:type_name -> omnimesh.v1.ScopeUpdate
+	14, // 13: omnimesh.v1.AgentStreamResponse.route_update:type_name -> omnimesh.v1.RouteUpdate
+	15, // 14: omnimesh.v1.ScopeSnapshot.services:type_name -> omnimesh.v1.ServiceInfo
+	16, // 15: omnimesh.v1.ScopeSnapshot.routes:type_name -> omnimesh.v1.RouteInfo
+	18, // 16: omnimesh.v1.ScopeSnapshot.traffic_policies:type_name -> omnimesh.v1.TrafficPolicyInfo
+	26, // 17: omnimesh.v1.ScopeSnapshot.authz_policies:type_name -> omnimesh.v1.AuthzPolicyInfo
+	1,  // 18: omnimesh.v1.ScopeUpdate.type:type_name -> omnimesh.v1.ScopeUpdateType
+	15, // 19: omnimesh.v1.ScopeUpdate.services:type_name -> omnimesh.v1.ServiceInfo
+	16, // 20: omnimesh.v1.ScopeUpdate.routes:type_name -> omnimesh.v1.RouteInfo
+	18, // 21: omnimesh.v1.ScopeUpdate.traffic_policies:type_name -> omnimesh.v1.TrafficPolicyInfo
+	16, // 22: omnimesh.v1.RouteUpdate.routes:type_name -> omnimesh.v1.RouteInfo
+	17, // 23: omnimesh.v1.RouteInfo.target_nodes:type_name -> omnimesh.v1.NodeEndpointInfo
+	30, // 24: omnimesh.v1.NodeEndpointInfo.labels:type_name -> omnimesh.v1.NodeEndpointInfo.LabelsEntry
+	19, // 25: omnimesh.v1.TrafficPolicyInfo.retry:type_name -> omnimesh.v1.RetryPolicyInfo
+	20, // 26: omnimesh.v1.TrafficPolicyInfo.circuit_breaker:type_name -> omnimesh.v1.CircuitBreakerPolicyInfo
+	21, // 27: omnimesh.v1.TrafficPolicyInfo.rate_limiter:type_name -> omnimesh.v1.RateLimitPolicyInfo
+	22, // 28: omnimesh.v1.TrafficPolicyInfo.load_balancer:type_name -> omnimesh.v1.LoadBalancerPolicyInfo
+	23, // 29: omnimesh.v1.TrafficPolicyInfo.outlier_detection:type_name -> omnimesh.v1.OutlierDetectionPolicyInfo
+	25, // 30: omnimesh.v1.TrafficPolicyInfo.routes:type_name -> omnimesh.v1.TrafficRouteInfo
+	2,  // 31: omnimesh.v1.RateLimitPolicyInfo.limit_exceeded_action:type_name -> omnimesh.v1.RateLimitAction
+	3,  // 32: omnimesh.v1.LoadBalancerPolicyInfo.algorithm:type_name -> omnimesh.v1.LoadBalancerAlgorithm
+	31, // 33: omnimesh.v1.TrafficRouteDestinationInfo.labels:type_name -> omnimesh.v1.TrafficRouteDestinationInfo.LabelsEntry
+	24, // 34: omnimesh.v1.TrafficRouteInfo.destination:type_name -> omnimesh.v1.TrafficRouteDestinationInfo
+	27, // 35: omnimesh.v1.AuthzPolicyInfo.source:type_name -> omnimesh.v1.SelectorInfo
+	27, // 36: omnimesh.v1.AuthzPolicyInfo.destination:type_name -> omnimesh.v1.SelectorInfo
+	32, // 37: omnimesh.v1.SelectorInfo.labels:type_name -> omnimesh.v1.SelectorInfo.LabelsEntry
+	4,  // 38: omnimesh.v1.AgentService.AgentStream:input_type -> omnimesh.v1.AgentStreamRequest
+	11, // 39: omnimesh.v1.AgentService.AgentStream:output_type -> omnimesh.v1.AgentStreamResponse
+	39, // [39:40] is the sub-list for method output_type
+	38, // [38:39] is the sub-list for method input_type
+	38, // [38:38] is the sub-list for extension type_name
+	38, // [38:38] is the sub-list for extension extendee
+	0,  // [0:38] is the sub-list for field type_name
 }
 
 func init() { file_omnimesh_v1_agent_proto_init() }
@@ -1471,8 +2148,9 @@ func file_omnimesh_v1_agent_proto_init() {
 		(*AgentStreamRequest_HealthReport)(nil),
 		(*AgentStreamRequest_DrainRequest)(nil),
 		(*AgentStreamRequest_UpdateNodeServices)(nil),
+		(*AgentStreamRequest_DrainNode)(nil),
 	}
-	file_omnimesh_v1_agent_proto_msgTypes[5].OneofWrappers = []any{
+	file_omnimesh_v1_agent_proto_msgTypes[7].OneofWrappers = []any{
 		(*AgentStreamResponse_ScopeSnapshot)(nil),
 		(*AgentStreamResponse_ScopeUpdate)(nil),
 		(*AgentStreamResponse_RouteUpdate)(nil),
@@ -1482,8 +2160,8 @@ func file_omnimesh_v1_agent_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_omnimesh_v1_agent_proto_rawDesc), len(file_omnimesh_v1_agent_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   19,
+			NumEnums:      4,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

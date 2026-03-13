@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"net/netip"
 	"sync"
+	"time"
 
 	omnimeshv1 "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1"
-	"github.com/esachser/omnimeshcontrol/internal/codec"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
@@ -25,6 +25,7 @@ type AgentServer struct {
 	nodeRegistrar  inbound.NodeRegistrar
 	healthReporter inbound.ServiceHealthReporter
 	scopeManager   inbound.AgentScopeManager
+	routeManager   inbound.RouteManager
 	logger         *slog.Logger
 
 	mu            sync.RWMutex
@@ -36,6 +37,7 @@ func NewAgentServer(
 	nodeRegistrar inbound.NodeRegistrar,
 	healthReporter inbound.ServiceHealthReporter,
 	scopeManager inbound.AgentScopeManager,
+	routeManager inbound.RouteManager,
 	logger *slog.Logger,
 ) *AgentServer {
 	if logger == nil {
@@ -45,6 +47,7 @@ func NewAgentServer(
 		nodeRegistrar:  nodeRegistrar,
 		healthReporter: healthReporter,
 		scopeManager:   scopeManager,
+		routeManager:   routeManager,
 		logger:         logger,
 		activeStreams:  make(map[string]omnimeshv1.AgentService_AgentStreamServer),
 	}
@@ -89,6 +92,11 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 	// Register the node.
 	if err := s.nodeRegistrar.RegisterNode(ctx, node); err != nil {
 		return status.Errorf(codes.Internal, "register node: %v", err)
+	}
+
+	// Persist TargetRoutes for the node's initial services.
+	for _, svcInfo := range reg.Services {
+		s.applyTargetRoute(ctx, svcInfo, nodeID)
 	}
 
 	// On stream close (normal or error), handle disconnect.
@@ -140,10 +148,10 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 func (s *AgentServer) handleHealthReport(ctx context.Context, report *omnimeshv1.HealthReport, nodeID string) {
 	health := &model.EndpointHealth{
 		ServiceID: model.ServiceID{
-			Namespace: report.ServiceNamespace,
+			Namespace: report.Namespace,
 			Name:      report.ServiceName,
 		},
-		Address:   report.EndpointAddress,
+		Address:   report.EndpointId,
 		Status:    healthStatusFromProto(report.Status),
 		ProbeType: probeTypeFromString(report.ProbeType),
 		NodeID:    nodeID,
@@ -164,25 +172,41 @@ func (s *AgentServer) handleUpdateNodeServices(ctx context.Context, req *omnimes
 	var added, removed []model.ServiceID
 
 	for _, raw := range req.AddedServices {
-		svcID, err := model.ParseServiceID(raw)
-		if err != nil {
-			s.logger.Warn("invalid service ID in AddedServices", "raw", raw, "error", err)
-			continue
+		svcID := model.ServiceID{
+			Namespace: raw.Namespace,
+			Name:      raw.Name,
 		}
 		added = append(added, svcID)
+		s.applyTargetRoute(ctx, raw, nodeID)
 	}
 
 	for _, raw := range req.RemovedServices {
-		svcID, err := model.ParseServiceID(raw)
-		if err != nil {
-			s.logger.Warn("invalid service ID in RemovedServices", "raw", raw, "error", err)
-			continue
+		svcID := model.ServiceID{
+			Namespace: raw.Namespace,
+			Name:      raw.Name,
 		}
 		removed = append(removed, svcID)
+		if err := s.routeManager.Delete(ctx, raw.Namespace, raw.Id); err != nil {
+			s.logger.Warn("failed to delete target route", "nodeID", nodeID, "route", raw.Id, "error", err)
+		}
 	}
 
 	if err := s.nodeRegistrar.UpdateNodeServices(ctx, nodeID, added, removed); err != nil {
 		s.logger.Warn("failed to process update node services", "nodeID", nodeID, "error", err)
+	}
+}
+
+// applyTargetRoute persists a TargetRoute for a service reported by an agent.
+func (s *AgentServer) applyTargetRoute(ctx context.Context, svcInfo *omnimeshv1.NodeServiceInfo, nodeID string) {
+	route := &model.TargetRoute{
+		NodeID:        nodeID,
+		Name:          svcInfo.Id,
+		Namespace:     svcInfo.Namespace,
+		TargetService: svcInfo.Name,
+		Labels:        svcInfo.Labels,
+	}
+	if err := s.routeManager.Apply(ctx, route); err != nil {
+		s.logger.Warn("failed to apply target route", "nodeID", nodeID, "route", svcInfo.Id, "error", err)
 	}
 }
 
@@ -243,19 +267,15 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 
 	for _, route := range scope.Routes {
 		ri := &omnimeshv1.RouteInfo{
-			ServiceNamespace: route.ServiceID.Namespace,
-			ServiceName:      route.ServiceID.Name,
-		}
-		if route.MeshAddr.IsValid() {
-			ri.MeshAddr = route.MeshAddr.String()
-		}
-		for _, node := range route.TargetNodes {
-			ri.TargetNodes = append(ri.TargetNodes, &omnimeshv1.NodeEndpointInfo{
-				NodeId: node.NodeID,
-				Addr:   node.Addr.String(),
-				Target: node.Target,
-				Labels: node.Labels,
-			})
+			Namespace:   route.Namespace,
+			ServiceName: route.TargetService,
+			TargetNodes: []*omnimeshv1.NodeEndpointInfo{
+				{
+					NodeId: route.NodeID,
+					Labels: route.Labels,
+					Addr:   route.Address.String(),
+				},
+			},
 		}
 		snapshot.Routes = append(snapshot.Routes, ri)
 	}
@@ -319,19 +339,14 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 
 	for _, route := range update.Routes {
 		ri := &omnimeshv1.RouteInfo{
-			ServiceNamespace: route.ServiceID.Namespace,
-			ServiceName:      route.ServiceID.Name,
-		}
-		if route.MeshAddr.IsValid() {
-			ri.MeshAddr = route.MeshAddr.String()
-		}
-		for _, node := range route.TargetNodes {
-			ri.TargetNodes = append(ri.TargetNodes, &omnimeshv1.NodeEndpointInfo{
-				NodeId: node.NodeID,
-				Addr:   node.Addr.String(),
-				Target: node.Target,
-				Labels: node.Labels,
-			})
+			Namespace:   route.Namespace,
+			ServiceName: route.TargetService,
+			TargetNodes: []*omnimeshv1.NodeEndpointInfo{
+				{
+					NodeId: route.NodeID,
+					Labels: route.Labels,
+				},
+			},
 		}
 		protoUpdate.Routes = append(protoUpdate.Routes, ri)
 	}
@@ -344,15 +359,108 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 }
 
 func trafficPolicyToProto(policy model.TrafficPolicy) *omnimeshv1.TrafficPolicyInfo {
-	specJSON, _ := codec.EncodeTrafficPolicySpec(&policy)
-
 	return &omnimeshv1.TrafficPolicyInfo{
 		Name:                   policy.Name,
 		Namespace:              policy.Namespace,
 		TargetServiceNamespace: policy.TargetService.Namespace,
 		TargetServiceName:      policy.TargetService.Name,
-		Spec:                   specJSON,
+		Retry:                  retryPolicyToProto(policy.Retry),
+		CircuitBreaker:         circuitBreakerPolicyToProto(policy.CircuitBreaker),
+		RateLimiter:            rateLimitPolicyToProto(policy.RateLimiter),
+		LoadBalancer:           loadBalancerPolicyToProto(policy.LoadBalancer),
+		OutlierDetection:       outlierDetectionPolicyToProto(policy.OutlierDetection),
+		Routes:                 trafficRoutesToProto(policy.Routes),
 	}
+}
+
+func retryPolicyToProto(p *model.RetryPolicy) *omnimeshv1.RetryPolicyInfo {
+	if p == nil {
+		return nil
+	}
+	return &omnimeshv1.RetryPolicyInfo{
+		MaxRetries:    int32(p.MaxRetries),
+		RetryOn:       p.RetryOn,
+		BackoffBaseMs: p.BackoffBase.Milliseconds(),
+		BackoffMaxMs:  p.BackoffMax.Milliseconds(),
+	}
+}
+
+func circuitBreakerPolicyToProto(p *model.CircuitBreakerPolicy) *omnimeshv1.CircuitBreakerPolicyInfo {
+	if p == nil {
+		return nil
+	}
+	return &omnimeshv1.CircuitBreakerPolicyInfo{
+		FailureThreshold: int32(p.FailureThreshold),
+		FailureWindowMs:  p.FailureWindow.Milliseconds(),
+		HalfOpenAfterMs:  p.HalfOpenAfter.Milliseconds(),
+	}
+}
+
+func rateLimitPolicyToProto(p *model.RateLimitPolicy) *omnimeshv1.RateLimitPolicyInfo {
+	if p == nil {
+		return nil
+	}
+	action := omnimeshv1.RateLimitAction_RATE_LIMIT_ACTION_REJECT
+	if p.LimitExceededAction == model.RateLimitActionQueue {
+		action = omnimeshv1.RateLimitAction_RATE_LIMIT_ACTION_QUEUE
+	}
+	return &omnimeshv1.RateLimitPolicyInfo{
+		RequestsPerSecond:     int32(p.RequestsPerSecond),
+		BurstSize:             int32(p.BurstSize),
+		MaxConcurrentRequests: int32(p.MaxConcurrentRequests),
+		LimitExceededAction:   action,
+	}
+}
+
+func loadBalancerPolicyToProto(p *model.LoadBalancerPolicy) *omnimeshv1.LoadBalancerPolicyInfo {
+	if p == nil {
+		return nil
+	}
+	var algo omnimeshv1.LoadBalancerAlgorithm
+	switch p.Algorithm {
+	case model.LoadBalancerLeastConnections:
+		algo = omnimeshv1.LoadBalancerAlgorithm_LOAD_BALANCER_ALGORITHM_LEAST_CONNECTIONS
+	case model.LoadBalancerRandom:
+		algo = omnimeshv1.LoadBalancerAlgorithm_LOAD_BALANCER_ALGORITHM_RANDOM
+	default:
+		algo = omnimeshv1.LoadBalancerAlgorithm_LOAD_BALANCER_ALGORITHM_WEIGHTED_ROUND_ROBIN
+	}
+	return &omnimeshv1.LoadBalancerPolicyInfo{Algorithm: algo}
+}
+
+func outlierDetectionPolicyToProto(p *model.OutlierDetectionPolicy) *omnimeshv1.OutlierDetectionPolicyInfo {
+	if p == nil {
+		return nil
+	}
+	return &omnimeshv1.OutlierDetectionPolicyInfo{
+		ErrorRateThreshold: p.ErrorRateThreshold,
+		MinReportingAgents: int32(p.MinReportingAgents),
+		EjectionDurationMs: p.EjectionDuration.Milliseconds(),
+		MaxEjectionPercent: p.MaxEjectionPercent,
+	}
+}
+
+func trafficRoutesToProto(routes []model.TrafficRoute) []*omnimeshv1.TrafficRouteInfo {
+	if len(routes) == 0 {
+		return nil
+	}
+	out := make([]*omnimeshv1.TrafficRouteInfo, 0, len(routes))
+	for _, r := range routes {
+		out = append(out, &omnimeshv1.TrafficRouteInfo{
+			Destination: &omnimeshv1.TrafficRouteDestinationInfo{
+				Target: r.Destination.Target,
+				Labels: r.Destination.Labels,
+			},
+			Weight: int32(r.Weight),
+		})
+	}
+	return out
+}
+
+// durationFromMs converts a millisecond int64 (as stored in proto) back to time.Duration.
+// Kept here for use in any future proto→model conversion.
+func durationFromMs(ms int64) time.Duration {
+	return time.Duration(ms) * time.Millisecond
 }
 
 // BroadcastUpdate pushes a differential scope update to all active agents.

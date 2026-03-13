@@ -23,6 +23,7 @@ message AgentStreamRequest {
     HealthReport health_report = 2;
     DrainRequest drain_request = 3;
     UpdateNodeServicesRequest update_node_services = 4;
+    DrainNodeRequest drain_node = 5;
   }
 }
 
@@ -31,27 +32,36 @@ message RegisterNodeRequest {
   string platform = 2; // "linux", "windows", "darwin"
   string addr = 3; // "host:port" for HBONE tunneling
   map<string, string> labels = 4;
-  repeated string services = 5; // ServiceIDs in "namespace/name" format
+  repeated NodeServiceInfo services = 5; // ServiceIDs in "namespace/name" format
   string target = 6; // NetworkTarget the agent belongs to
 }
 
 message HealthReport {
-  string service_namespace = 1;
+  string namespace = 1;
   string service_name = 2;
-  string endpoint_address = 3;
+  string endpoint_id = 3;
   EndpointHealthStatus status = 4;
   string probe_type = 5; // "TCP", "HTTP", "gRPC"
 }
 
 message UpdateNodeServicesRequest {
-  repeated string added_services = 1;   // ServiceIDs in "namespace/name" format
-  repeated string removed_services = 2; // ServiceIDs in "namespace/name" format
+  repeated NodeServiceInfo added_services = 1; // ServiceIDs in "namespace/name" format
+  repeated NodeServiceInfo removed_services = 2; // ServiceIDs in "namespace/name" format
 }
 
 message DrainRequest {
   string service_namespace = 1;
   string service_name = 2;
   string endpoint_address = 3;
+}
+
+message DrainNodeRequest {}
+
+message NodeServiceInfo {
+  string namespace = 1;
+  string name = 2;
+  string id = 3;
+  map<string, string> labels = 4;
 }
 
 enum EndpointHealthStatus {
@@ -104,27 +114,18 @@ message ServiceInfo {
   string protocol = 3;
   string mesh_addr = 4;
   int32 port = 5;
-  repeated EndpointInfo endpoints = 6;
-}
-
-message EndpointInfo {
-  string address = 1;
-  int32 weight = 2;
-  EndpointHealthStatus health = 3;
 }
 
 message RouteInfo {
-  string service_namespace = 1;
+  string namespace = 1;
   string service_name = 2;
-  string mesh_addr = 3;
   repeated NodeEndpointInfo target_nodes = 4;
 }
 
 message NodeEndpointInfo {
   string node_id = 1;
   string addr = 2;
-  string target = 3;
-  map<string, string> labels = 4;
+  map<string, string> labels = 3;
 }
 
 message TrafficPolicyInfo {
@@ -132,7 +133,77 @@ message TrafficPolicyInfo {
   string namespace = 2;
   string target_service_namespace = 3;
   string target_service_name = 4;
-  bytes spec = 5; // JSON-encoded policy spec
+  RetryPolicyInfo retry = 5;
+  CircuitBreakerPolicyInfo circuit_breaker = 6;
+  RateLimitPolicyInfo rate_limiter = 7;
+  LoadBalancerPolicyInfo load_balancer = 8;
+  OutlierDetectionPolicyInfo outlier_detection = 9;
+  repeated TrafficRouteInfo routes = 10;
+}
+
+message RetryPolicyInfo {
+  int32 max_retries = 1;
+  repeated string retry_on = 2;
+  // backoff_base_ms is the initial backoff duration in milliseconds.
+  int64 backoff_base_ms = 3;
+  // backoff_max_ms is the maximum backoff duration in milliseconds.
+  int64 backoff_max_ms = 4;
+}
+
+message CircuitBreakerPolicyInfo {
+  int32 failure_threshold = 1;
+  // failure_window_ms is the rolling failure-counting window in milliseconds.
+  int64 failure_window_ms = 2;
+  // half_open_after_ms is the time after which a tripped circuit transitions
+  // to half-open, in milliseconds.
+  int64 half_open_after_ms = 3;
+}
+
+enum RateLimitAction {
+  RATE_LIMIT_ACTION_UNSPECIFIED = 0;
+  RATE_LIMIT_ACTION_REJECT = 1;
+  RATE_LIMIT_ACTION_QUEUE = 2;
+}
+
+message RateLimitPolicyInfo {
+  int32 requests_per_second = 1;
+  int32 burst_size = 2;
+  int32 max_concurrent_requests = 3;
+  RateLimitAction limit_exceeded_action = 4;
+}
+
+enum LoadBalancerAlgorithm {
+  LOAD_BALANCER_ALGORITHM_UNSPECIFIED = 0;
+  LOAD_BALANCER_ALGORITHM_WEIGHTED_ROUND_ROBIN = 1;
+  LOAD_BALANCER_ALGORITHM_LEAST_CONNECTIONS = 2;
+  LOAD_BALANCER_ALGORITHM_RANDOM = 3;
+}
+
+message LoadBalancerPolicyInfo {
+  LoadBalancerAlgorithm algorithm = 1;
+}
+
+message OutlierDetectionPolicyInfo {
+  // error_rate_threshold is the fraction of errors above which an endpoint is
+  // ejected (e.g. 0.5 = 50%).
+  double error_rate_threshold = 1;
+  int32 min_reporting_agents = 2;
+  // ejection_duration_ms is how long an endpoint stays ejected, in milliseconds.
+  int64 ejection_duration_ms = 3;
+  // max_ejection_percent is the maximum percentage of endpoints that can be
+  // ejected simultaneously (0–100).
+  double max_ejection_percent = 4;
+}
+
+message TrafficRouteDestinationInfo {
+  // target is the NetworkTarget identifier; empty means any target.
+  string target = 1;
+  map<string, string> labels = 2;
+}
+
+message TrafficRouteInfo {
+  TrafficRouteDestinationInfo destination = 1;
+  int32 weight = 2;
 }
 
 message AuthzPolicyInfo {

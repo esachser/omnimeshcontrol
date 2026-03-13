@@ -3,6 +3,7 @@ package routedist
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -15,7 +16,7 @@ import (
 // to agents happens via the bidirectional gRPC stream in Phase 4.
 type GRPCRouteDistributor struct {
 	mu     sync.RWMutex
-	routes map[string]model.MeshRoute // keyed by ServiceID.String()
+	routes map[string]model.TargetRoute // keyed by namespace/nodeID/targetService/name
 	logger *slog.Logger
 }
 
@@ -25,56 +26,53 @@ func NewGRPCRouteDistributor(logger *slog.Logger) *GRPCRouteDistributor {
 		logger = slog.Default()
 	}
 	return &GRPCRouteDistributor{
-		routes: make(map[string]model.MeshRoute),
+		routes: make(map[string]model.TargetRoute),
 		logger: logger,
 	}
 }
 
-// AnnounceRoute stores or updates a route for future distribution to agents.
-func (d *GRPCRouteDistributor) AnnounceRoute(_ context.Context, route model.MeshRoute) error {
+// routeKey returns a unique key for a TargetRoute.
+func routeKey(route model.TargetRoute) string {
+	return fmt.Sprintf("%s/%s/%s/%s", route.Namespace, route.NodeID, route.TargetService, route.Name)
+}
+
+// AnnounceRoute stores or updates a TargetRoute registration.
+func (d *GRPCRouteDistributor) AnnounceRoute(_ context.Context, route model.TargetRoute) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	key := route.ServiceID.String()
+	key := routeKey(route)
 	d.routes[key] = route
-	d.logger.Info("route announced",
-		"service", key,
-		"meshAddr", route.MeshAddr,
-		"targetNodes", len(route.TargetNodes),
+	d.logger.Info("target route announced",
+		"namespace", route.Namespace,
+		"nodeID", route.NodeID,
+		"targetService", route.TargetService,
+		"name", route.Name,
 	)
 	return nil
 }
 
-// WithdrawRoute removes a route from the distribution state.
-func (d *GRPCRouteDistributor) WithdrawRoute(_ context.Context, route model.MeshRoute) error {
+// WithdrawRoute removes a TargetRoute registration.
+func (d *GRPCRouteDistributor) WithdrawRoute(_ context.Context, route model.TargetRoute) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	key := route.ServiceID.String()
+	key := routeKey(route)
 	delete(d.routes, key)
-	d.logger.Info("route withdrawn", "service", key)
+	d.logger.Info("target route withdrawn",
+		"namespace", route.Namespace,
+		"nodeID", route.NodeID,
+		"name", route.Name,
+	)
 	return nil
 }
 
-// GetRoute returns a currently announced route for a service.
-// Returns nil if no route exists.
-func (d *GRPCRouteDistributor) GetRoute(serviceID model.ServiceID) *model.MeshRoute {
+// AllRoutes returns all currently registered TargetRoutes.
+func (d *GRPCRouteDistributor) AllRoutes() []model.TargetRoute {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	route, ok := d.routes[serviceID.String()]
-	if !ok {
-		return nil
-	}
-	return &route
-}
-
-// AllRoutes returns all currently announced routes.
-func (d *GRPCRouteDistributor) AllRoutes() []model.MeshRoute {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	result := make([]model.MeshRoute, 0, len(d.routes))
+	result := make([]model.TargetRoute, 0, len(d.routes))
 	for _, route := range d.routes {
 		result = append(result, route)
 	}

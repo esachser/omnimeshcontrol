@@ -104,30 +104,43 @@ func (s *AgentScopeAppService) GetAgentScope(ctx context.Context, nodeID string)
 		reqTarget = reqNode.Target
 	}
 
-	// Route Distribution with Gateway Address Substitution (RFC-0006)
-	if s.routes != nil && s.targets != nil {
+	// Route Distribution with Gateway Address Substitution (RFC-0006).
+	// TargetRoutes hold per-node registrations. We copy each one and, for nodes
+	// in a different NetworkTarget than the requesting agent, substitute the
+	// HBONE gateway address in the NodeID field is not applicable here — we
+	// instead annotate the TargetRoute by storing gateway-addr in Labels so the
+	// agent can do address resolution. The simpler path: send all TargetRoutes
+	// and let the agent look up addresses — future refactor.
+	// For now: filter/rewrite using the same gateway substitution as before,
+	// but we embed the resolved addr as a label "__gateway__" on the TargetRoute copy.
+	if s.routes != nil {
 		allRoutes := s.routes.AllRoutes()
-		for _, r := range allRoutes {
-			// Copy the route to modify nodes without affecting the global state.
-			agentRoute := r
+		for _, tr := range allRoutes {
+			// Copy to avoid mutating shared state.
+			routeCopy := model.TargetRoute{
+				Name:          tr.Name,
+				Namespace:     tr.Namespace,
+				TargetService: tr.TargetService,
+				NodeID:        tr.NodeID,
+				Labels:        tr.Labels,
+			}
 
-			for i, endpoint := range agentRoute.TargetNodes {
-				destNode, err := s.state.GetNode(ctx, endpoint.NodeID)
-				if err != nil {
-					continue // Ignore missing nodes in this loop
-				}
-
-				// If the Destination Target is different from Requesting Target, substitute address.
+			// If the node is in a different target, resolve the gateway address
+			// and embed it as a special label so agents can find the tunnel endpoint.
+			destNode, nErr := s.state.GetNode(ctx, tr.NodeID)
+			if nErr == nil && destNode != nil {
+				routeCopy.Address = destNode.Addr
 				if destNode.Target != reqTarget && destNode.Target != "" {
-					netTarget, err := s.targets.Get(ctx, destNode.Target)
-					if err == nil && netTarget != nil && netTarget.GatewayAddress != "" {
-						if addr, err := netip.ParseAddrPort(netTarget.GatewayAddress); err == nil {
-							agentRoute.TargetNodes[i].Addr = addr
+					netTarget, tErr := s.targets.Get(ctx, destNode.Target)
+					if tErr == nil && netTarget != nil && netTarget.GatewayAddress != "" {
+						if ipAddr, aErr := netip.ParseAddrPort(netTarget.GatewayAddress); aErr == nil {
+							routeCopy.Address = ipAddr
 						}
 					}
 				}
 			}
-			scope.Routes = append(scope.Routes, agentRoute)
+
+			scope.Routes = append(scope.Routes, routeCopy)
 		}
 	}
 

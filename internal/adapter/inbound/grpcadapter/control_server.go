@@ -24,7 +24,6 @@ type ControlPlaneServer struct {
 	services   inbound.ServiceManager
 	namespaces inbound.NamespaceManager
 	targets    inbound.TargetManager
-	routes     inbound.RouteManager
 	policies   inbound.TrafficPolicyManager
 	logger     *slog.Logger
 }
@@ -34,7 +33,6 @@ func NewControlPlaneServer(
 	services inbound.ServiceManager,
 	namespaces inbound.NamespaceManager,
 	targets inbound.TargetManager,
-	routes inbound.RouteManager,
 	policies inbound.TrafficPolicyManager,
 	logger *slog.Logger,
 ) *ControlPlaneServer {
@@ -45,7 +43,6 @@ func NewControlPlaneServer(
 		services:   services,
 		namespaces: namespaces,
 		targets:    targets,
-		routes:     routes,
 		policies:   policies,
 		logger:     logger,
 	}
@@ -65,8 +62,6 @@ func (s *ControlPlaneServer) ApplyResource(ctx context.Context, req *omnimeshv1.
 		return s.applyNamespace(ctx, r)
 	case "NetworkTarget":
 		return s.applyNetworkTarget(ctx, r)
-	case "TargetRoute":
-		return s.applyTargetRoute(ctx, r)
 	case "TrafficPolicy":
 		return s.applyTrafficPolicy(ctx, r)
 	default:
@@ -164,47 +159,6 @@ func (s *ControlPlaneServer) applyNetworkTarget(ctx context.Context, r *omnimesh
 	}, nil
 }
 
-func (s *ControlPlaneServer) applyTargetRoute(ctx context.Context, r *omnimeshv1.Resource) (*omnimeshv1.ApplyResourceResponse, error) {
-	if r.Metadata == nil {
-		return nil, status.Error(codes.InvalidArgument, "metadata is required")
-	}
-
-	var spec struct {
-		TargetService     string `json:"targetService"`
-		DestinationTarget string `json:"destinationTarget"`
-		Weight            int    `json:"weight"`
-		Failover          *struct {
-			ActiveWhenTargetIsDown string `json:"activeWhenTargetIsDown"`
-		} `json:"failover"`
-	}
-	if len(r.Spec) > 0 {
-		if err := json.Unmarshal(r.Spec, &spec); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid spec: %v", err)
-		}
-	}
-
-	route := &model.TargetRoute{
-		Name:              r.Metadata.Name,
-		Namespace:         r.Metadata.Namespace,
-		TargetService:     spec.TargetService,
-		DestinationTarget: spec.DestinationTarget,
-		Weight:            spec.Weight,
-	}
-	if spec.Failover != nil {
-		route.Failover = &model.FailoverPolicy{
-			ActiveWhenTargetIsDown: spec.Failover.ActiveWhenTargetIsDown,
-		}
-	}
-
-	if err := s.routes.Apply(ctx, route); err != nil {
-		return nil, status.Errorf(codes.Internal, "apply target route: %v", err)
-	}
-
-	return &omnimeshv1.ApplyResourceResponse{
-		Resource: targetRouteToProto(route),
-	}, nil
-}
-
 func (s *ControlPlaneServer) applyTrafficPolicy(ctx context.Context, r *omnimeshv1.Resource) (*omnimeshv1.ApplyResourceResponse, error) {
 	if r.Metadata == nil {
 		return nil, status.Error(codes.InvalidArgument, "metadata is required")
@@ -269,12 +223,6 @@ func (s *ControlPlaneServer) GetResource(ctx context.Context, req *omnimeshv1.Ge
 		}
 		return &omnimeshv1.GetResourceResponse{Resource: networkTargetToProto(target)}, nil
 
-	case "TargetRoute":
-		route, err := s.routes.Get(ctx, req.Namespace, req.Name)
-		if err != nil {
-			return nil, status.Errorf(codes.NotFound, "%v", err)
-		}
-		return &omnimeshv1.GetResourceResponse{Resource: targetRouteToProto(route)}, nil
 	case "TrafficPolicy":
 		policy, err := s.policies.GetTrafficPolicy(ctx, req.Namespace, req.Name)
 		if err != nil {
@@ -323,16 +271,6 @@ func (s *ControlPlaneServer) ListResources(ctx context.Context, req *omnimeshv1.
 		}
 		return &omnimeshv1.ListResourcesResponse{Resources: protos}, nil
 
-	case "TargetRoute":
-		routes, err := s.routes.List(ctx, req.Namespace)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "%v", err)
-		}
-		var protos []*omnimeshv1.Resource
-		for _, rt := range routes {
-			protos = append(protos, targetRouteToProto(rt))
-		}
-		return &omnimeshv1.ListResourcesResponse{Resources: protos}, nil
 	case "TrafficPolicy":
 		policies, err := s.policies.ListTrafficPolicies(ctx, req.Namespace)
 		if err != nil {
@@ -370,11 +308,6 @@ func (s *ControlPlaneServer) DeleteResource(ctx context.Context, req *omnimeshv1
 		}
 		return &omnimeshv1.DeleteResourceResponse{}, nil
 
-	case "TargetRoute":
-		if err := s.routes.Delete(ctx, req.Namespace, req.Name); err != nil {
-			return nil, status.Errorf(codes.Internal, "%v", err)
-		}
-		return &omnimeshv1.DeleteResourceResponse{}, nil
 	case "TrafficPolicy":
 		if err := s.policies.DeleteTrafficPolicy(ctx, req.Namespace, req.Name); err != nil {
 			return nil, status.Errorf(codes.Internal, "%v", err)
@@ -438,30 +371,6 @@ func networkTargetToProto(t *model.NetworkTarget) *omnimeshv1.Resource {
 		Kind:       "NetworkTarget",
 		Metadata: &omnimeshv1.ResourceMetadata{
 			Name: t.Name,
-		},
-		Spec: specJSON,
-	}
-}
-
-func targetRouteToProto(rt *model.TargetRoute) *omnimeshv1.Resource {
-	spec := map[string]any{
-		"targetService":     rt.TargetService,
-		"destinationTarget": rt.DestinationTarget,
-		"weight":            rt.Weight,
-	}
-	if rt.Failover != nil {
-		spec["failover"] = map[string]string{
-			"activeWhenTargetIsDown": rt.Failover.ActiveWhenTargetIsDown,
-		}
-	}
-	specJSON, _ := json.Marshal(spec)
-
-	return &omnimeshv1.Resource{
-		ApiVersion: "traffic.omnimesh.io/v1",
-		Kind:       "TargetRoute",
-		Metadata: &omnimeshv1.ResourceMetadata{
-			Name:      rt.Name,
-			Namespace: rt.Namespace,
 		},
 		Spec: specJSON,
 	}

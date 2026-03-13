@@ -50,8 +50,8 @@ type AgentScope struct {
 	NodeID string
 	// Services are the services relevant to this agent.
 	Services []Service
-	// Routes are the mesh routes relevant to this agent.
-	Routes []MeshRoute
+	// Routes are the target routes (node-level service registrations) relevant to this agent.
+	Routes []TargetRoute
 	// TrafficPolicies are the traffic policies relevant to this agent's services.
 	TrafficPolicies []TrafficPolicy
 	// AuthzPolicies are the authorization policies relevant to this agent's services.
@@ -78,8 +78,8 @@ type ScopeUpdate struct {
 	Type ScopeUpdateType
 	// Services are the services that changed (if applicable).
 	Services []Service
-	// Routes are the routes that changed (if applicable).
-	Routes []MeshRoute
+	// Routes are the target routes that changed (if applicable).
+	Routes []TargetRoute
 	// TrafficPolicies are the policies that changed (if applicable).
 	TrafficPolicies []TrafficPolicy
 	// AuthzPolicies are the authz policies that changed (if applicable).

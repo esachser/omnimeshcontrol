@@ -14,12 +14,11 @@ import (
 )
 
 // ServiceAppService implements the ServiceManager inbound port.
-// It orchestrates: validate → allocate IP → register identity → persist → DNS → route.
+// It orchestrates: validate → allocate IP → register identity → persist → DNS.
 type ServiceAppService struct {
 	resources  outbound.ResourceStore
 	state      outbound.StateStore
 	dns        outbound.DNSRecordManager
-	routes     outbound.RouteDistributor
 	identity   outbound.IdentityManager
 	namespaces inbound.NamespaceManager
 	dnsZone    string
@@ -31,7 +30,6 @@ type ServiceAppServiceConfig struct {
 	Resources  outbound.ResourceStore
 	State      outbound.StateStore
 	DNS        outbound.DNSRecordManager
-	Routes     outbound.RouteDistributor
 	Identity   outbound.IdentityManager
 	Namespaces inbound.NamespaceManager
 	DNSZone    string
@@ -47,7 +45,6 @@ func NewServiceAppService(cfg ServiceAppServiceConfig) *ServiceAppService {
 		resources:  cfg.Resources,
 		state:      cfg.State,
 		dns:        cfg.DNS,
-		routes:     cfg.Routes,
 		identity:   cfg.Identity,
 		namespaces: cfg.Namespaces,
 		dnsZone:    cfg.DNSZone,
@@ -107,14 +104,6 @@ func (s *ServiceAppService) Apply(ctx context.Context, service *model.Service) e
 		return fmt.Errorf("service apply: dns: %w", err)
 	}
 
-	// Announce route (with empty TargetNodes for now, will be populated when agents report).
-	route := model.MeshRoute{
-		ServiceID: service.ID,
-		MeshAddr:  service.MeshAddr,
-	}
-	if err := s.routes.AnnounceRoute(ctx, route); err != nil {
-		return fmt.Errorf("service apply: announce route: %w", err)
-	}
 
 	s.logger.Info("service applied",
 		"namespace", service.ID.Namespace,
@@ -173,17 +162,6 @@ func (s *ServiceAppService) List(ctx context.Context, namespace string) ([]*mode
 // Delete removes a service.
 func (s *ServiceAppService) Delete(ctx context.Context, namespace, name string) error {
 	svcID := model.ServiceID{Namespace: namespace, Name: name}
-
-	// Get mesh address for DNS/route cleanup.
-	addr, _ := s.state.GetIPAllocation(ctx, svcID)
-
-	// Withdraw route.
-	if addr.IsValid() {
-		route := model.MeshRoute{ServiceID: svcID, MeshAddr: addr}
-		if err := s.routes.WithdrawRoute(ctx, route); err != nil {
-			s.logger.Warn("failed to withdraw route during delete", "error", err)
-		}
-	}
 
 	// Remove DNS record.
 	fqdn := name + "." + namespace + "." + s.dnsZone

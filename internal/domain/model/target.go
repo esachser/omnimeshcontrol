@@ -1,5 +1,7 @@
 package model
 
+import "net/netip"
+
 // NetworkTarget represents a distinct routing domain (an isolated network)
 // where internal IPs are routable between nodes within the target, but not from the outside.
 // Example: a single Kubernetes cluster or a single VNet.
@@ -11,13 +13,6 @@ type NetworkTarget struct {
 	GatewayAddress string
 }
 
-// FailoverPolicy defines failover rules for a target route.
-type FailoverPolicy struct {
-	// ActiveWhenTargetIsDown specifies that this route is only active
-	// when the given target is unavailable.
-	ActiveWhenTargetIsDown string
-}
-
 // TargetRoute defines how traffic for a specific service is distributed
 // across different targets. It is defined per-target to prevent lock points.
 type TargetRoute struct {
@@ -27,10 +22,10 @@ type TargetRoute struct {
 	Namespace string
 	// TargetService is the name of the service this route applies to.
 	TargetService string
-	// DestinationTarget is the name of the target being configured.
-	DestinationTarget string
-	// Weight is the relative weight of this target compared to others.
-	Weight int
-	// Failover contains optional failover rules.
-	Failover *FailoverPolicy
+	// Labels is a map of labels to match against service instances.
+	Labels map[string]string
+	// NodeID is the ID of the node this route is associated with.
+	NodeID string
+	// Address is the address of the node this route is associated with.
+	Address netip.AddrPort
 }

@@ -206,31 +206,33 @@ func (m *mockDNSManager) DeleteRecord(_ context.Context, fqdn string) error {
 
 type mockRouteDistributor struct {
 	mu     sync.RWMutex
-	routes map[string]model.MeshRoute
+	routes map[string]model.TargetRoute
 }
 
 func newMockRouteDistributor() *mockRouteDistributor {
-	return &mockRouteDistributor{routes: make(map[string]model.MeshRoute)}
+	return &mockRouteDistributor{routes: make(map[string]model.TargetRoute)}
 }
 
-func (m *mockRouteDistributor) AnnounceRoute(_ context.Context, route model.MeshRoute) error {
+func (m *mockRouteDistributor) AnnounceRoute(_ context.Context, route model.TargetRoute) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.routes[route.ServiceID.String()] = route
+	key := route.Namespace + "/" + route.NodeID + "/" + route.TargetService + "/" + route.Name
+	m.routes[key] = route
 	return nil
 }
 
-func (m *mockRouteDistributor) WithdrawRoute(_ context.Context, route model.MeshRoute) error {
+func (m *mockRouteDistributor) WithdrawRoute(_ context.Context, route model.TargetRoute) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.routes, route.ServiceID.String())
+	key := route.Namespace + "/" + route.NodeID + "/" + route.TargetService + "/" + route.Name
+	delete(m.routes, key)
 	return nil
 }
 
-func (m *mockRouteDistributor) AllRoutes() []model.MeshRoute {
+func (m *mockRouteDistributor) AllRoutes() []model.TargetRoute {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	var all []model.MeshRoute
+	var all []model.TargetRoute
 	for _, r := range m.routes {
 		all = append(all, r)
 	}

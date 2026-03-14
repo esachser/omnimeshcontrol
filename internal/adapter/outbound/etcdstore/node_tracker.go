@@ -5,10 +5,9 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-)
 
-// NodeLivenessCallback is called when a node's liveness state changes.
-type NodeLivenessCallback func(ctx context.Context, nodeID string)
+	"github.com/esachser/omnimeshcontrol/internal/domain/service"
+)
 
 // NodeLivenessTracker tracks agent node liveness in-memory via gRPC stream
 // presence. When a stream disconnects, a grace period timer starts. If the
@@ -17,7 +16,7 @@ type NodeLivenessTracker struct {
 	mu          sync.Mutex
 	gracePeriod time.Duration
 	nodes       map[string]*trackedNode
-	onNodeLost  NodeLivenessCallback
+	onNodeLost  []service.NodeLivenessCallback
 	logger      *slog.Logger
 }
 
@@ -27,16 +26,23 @@ type trackedNode struct {
 }
 
 // NewNodeLivenessTracker creates a new tracker with the given grace period.
-func NewNodeLivenessTracker(gracePeriod time.Duration, onNodeLost NodeLivenessCallback, logger *slog.Logger) *NodeLivenessTracker {
+func NewNodeLivenessTracker(gracePeriod time.Duration, logger *slog.Logger) *NodeLivenessTracker {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &NodeLivenessTracker{
 		gracePeriod: gracePeriod,
 		nodes:       make(map[string]*trackedNode),
-		onNodeLost:  onNodeLost,
+		onNodeLost:  nil,
 		logger:      logger,
 	}
+}
+
+// RegisterCallback registers a callback to be called when a node is lost.
+func (t *NodeLivenessTracker) RegisterCallback(callback service.NodeLivenessCallback) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.onNodeLost = append(t.onNodeLost, callback)
 }
 
 // TrackNode registers a node as alive. If the node was previously disconnected
@@ -97,8 +103,8 @@ func (t *NodeLivenessTracker) graceTimer(ctx context.Context, nodeID string) {
 		t.mu.Unlock()
 
 		t.logger.Warn("node grace period expired, marking as lost", "nodeID", nodeID)
-		if t.onNodeLost != nil {
-			t.onNodeLost(context.Background(), nodeID)
+		for _, callback := range t.onNodeLost {
+			go callback(context.Background(), nodeID)
 		}
 	case <-ctx.Done():
 		// Grace period was cancelled (node reconnected).

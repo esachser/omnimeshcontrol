@@ -96,13 +96,15 @@ func run(logger *slog.Logger) error {
 	})
 
 	// NodeLivenessTracker with callback to mark nodes as lost.
-	nodeTracker := etcdstore.NewNodeLivenessTracker(gracePeriod, func(ctx context.Context, nodeID string) {
-		if err := stateStore.MarkNodeLost(ctx, nodeID); err != nil {
-			logger.Warn("failed to mark node as lost", "nodeID", nodeID, "error", err)
-		}
-	}, logger)
+	nodeTracker := etcdstore.NewNodeLivenessTracker(gracePeriod, logger)
+	// nodeTracker.RegisterCallback(func(ctx context.Context, nodeID string) {
+	// 	if err := stateStore.MarkNodeLost(ctx, nodeID); err != nil {
+	// 		logger.Warn("failed to mark node as lost", "nodeID", nodeID, "error", err)
+	// 	}
+	// })
 
-	nodeApp := application.NewNodeAppService(stateStore, nodeTracker, logger)
+	routeApp := application.NewRouteAppService(resourceStore, logger)
+	nodeApp := application.NewNodeAppService(stateStore, nodeTracker, routeApp, logger)
 
 	validator := domainservice.NewPolicyValidator()
 	policyApp := application.NewTrafficPolicyAppService(policyStore, resourceStore, validator, logger)
@@ -120,7 +122,6 @@ func run(logger *slog.Logger) error {
 		targetApp,
 		logger.WithGroup("scope_app"),
 	)
-	routeApp := application.NewRouteAppService(resourceStore, logger)
 
 	// --- Start gRPC server ---
 	lis, err := net.Listen("tcp", grpcAddr)
@@ -154,7 +155,14 @@ func run(logger *slog.Logger) error {
 	go func() {
 		<-ctx.Done()
 		logger.Info("shutting down gRPC server...")
-		grpcServer.GracefulStop()
+		ctxEnd, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		go func() {
+			grpcServer.GracefulStop()
+		}()
+		<-ctxEnd.Done()
+		grpcServer.Stop()
+		logger.Info("gRPC server stopped")
 	}()
 
 	if err := grpcServer.Serve(lis); err != nil {

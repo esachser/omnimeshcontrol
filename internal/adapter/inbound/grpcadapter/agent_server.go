@@ -123,6 +123,7 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 	}
 
 	// Process incoming messages.
+messagereceiver:
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
@@ -139,10 +140,14 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 			s.handleDrainRequest(ctx, payload.DrainRequest)
 		case *omnimeshv1.AgentStreamRequest_UpdateNodeServices:
 			s.handleUpdateNodeServices(ctx, payload.UpdateNodeServices, nodeID)
+		case *omnimeshv1.AgentStreamRequest_DrainNode:
+			s.handleDrainNode(ctx, payload.DrainNode, nodeID)
+			break messagereceiver
 		default:
 			s.logger.Warn("unknown agent message type", "nodeID", nodeID)
 		}
 	}
+	return nil
 }
 
 func (s *AgentServer) handleHealthReport(ctx context.Context, report *omnimeshv1.HealthReport, nodeID string) {
@@ -186,13 +191,19 @@ func (s *AgentServer) handleUpdateNodeServices(ctx context.Context, req *omnimes
 			Name:      raw.Name,
 		}
 		removed = append(removed, svcID)
-		if err := s.routeManager.Delete(ctx, raw.Namespace, raw.Id); err != nil {
+		if err := s.routeManager.Delete(ctx, raw.Namespace, raw.Id, raw.Name, nodeID); err != nil {
 			s.logger.Warn("failed to delete target route", "nodeID", nodeID, "route", raw.Id, "error", err)
 		}
 	}
 
 	if err := s.nodeRegistrar.UpdateNodeServices(ctx, nodeID, added, removed); err != nil {
 		s.logger.Warn("failed to process update node services", "nodeID", nodeID, "error", err)
+	}
+}
+
+func (s *AgentServer) handleDrainNode(ctx context.Context, drain *omnimeshv1.DrainNodeRequest, nodeID string) {
+	if err := s.nodeRegistrar.DeregisterNode(ctx, nodeID); err != nil {
+		s.logger.Warn("failed to process drain node", "nodeID", nodeID, "error", err)
 	}
 }
 
@@ -345,6 +356,7 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 				{
 					NodeId: route.NodeID,
 					Labels: route.Labels,
+					Addr:   route.Address.String(),
 				},
 			},
 		}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
+	"github.com/esachser/omnimeshcontrol/internal/domain/service"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 )
@@ -15,30 +16,29 @@ import (
 // It coordinates node registration with persistent storage (StateStore)
 // and in-memory liveness tracking (NodeLivenessTracker).
 type NodeAppService struct {
-	state   outbound.StateStore
-	tracker NodeTracker
-	logger  *slog.Logger
-}
-
-// NodeTracker is the interface for the in-memory liveness tracker.
-// This decouples the application service from the concrete adapter implementation.
-type NodeTracker interface {
-	TrackNode(nodeID string)
-	OnDisconnect(nodeID string)
-	UntrackNode(nodeID string)
-	IsAlive(nodeID string) bool
+	state        outbound.StateStore
+	tracker      service.NodeTracker
+	routeManager inbound.RouteManager
+	logger       *slog.Logger
 }
 
 // NewNodeAppService creates a new NodeAppService.
-func NewNodeAppService(state outbound.StateStore, tracker NodeTracker, logger *slog.Logger) *NodeAppService {
+func NewNodeAppService(state outbound.StateStore, tracker service.NodeTracker, routeManager inbound.RouteManager, logger *slog.Logger) *NodeAppService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &NodeAppService{
-		state:   state,
-		tracker: tracker,
-		logger:  logger,
+	nap := &NodeAppService{
+		state:        state,
+		tracker:      tracker,
+		routeManager: routeManager,
+		logger:       logger,
 	}
+	tracker.RegisterCallback(func(ctx context.Context, nodeID string) {
+		if err := nap.DeregisterNode(ctx, nodeID); err != nil {
+			logger.Warn("failed to deregister node", "nodeID", nodeID, "error", err)
+		}
+	})
+	return nap
 }
 
 // RegisterNode registers a new agent node.
@@ -66,6 +66,10 @@ func (s *NodeAppService) RegisterNode(ctx context.Context, node *model.Node) err
 // DeregisterNode gracefully deregisters a node.
 func (s *NodeAppService) DeregisterNode(ctx context.Context, nodeID string) error {
 	s.tracker.UntrackNode(nodeID)
+
+	if err := s.routeManager.DeleteByNodeId(ctx, nodeID); err != nil {
+		s.logger.Warn("failed to delete routes for node", "nodeID", nodeID, "error", err)
+	}
 
 	if err := s.state.DeregisterNode(ctx, nodeID); err != nil {
 		return fmt.Errorf("node deregister: %w", err)

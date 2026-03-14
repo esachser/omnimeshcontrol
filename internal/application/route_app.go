@@ -10,6 +10,8 @@ import (
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 )
 
+const keyPrefix = "traffic.omnimesh.io/v1/TargetRoute/"
+
 // RouteAppService implements the RouteManager inbound port.
 type RouteAppService struct {
 	resources outbound.ResourceStore
@@ -33,7 +35,7 @@ func (s *RouteAppService) Apply(ctx context.Context, route *model.TargetRoute) e
 		return fmt.Errorf("route apply: name, namespace, nodeID and targetService are required")
 	}
 
-	key := fmt.Sprintf("traffic.omnimesh.io/v1/TargetRoute/%s/%s/%s/%s", route.Namespace, route.NodeID, route.TargetService, route.Name)
+	key := formatRouteKey(route.Namespace, route.NodeID, route.TargetService, route.Name)
 
 	if _, err := s.resources.Put(ctx, key, routeToResource(route)); err != nil {
 		return fmt.Errorf("route apply: %w", err)
@@ -46,26 +48,18 @@ func (s *RouteAppService) Apply(ctx context.Context, route *model.TargetRoute) e
 // Get retrieves a target route by namespace and name.
 // Because routes are keyed by {namespace}/{nodeID}/{targetService}/{name},
 // it scans all routes in the namespace and returns the first that matches the name.
-func (s *RouteAppService) Get(ctx context.Context, namespace, name string) (*model.TargetRoute, error) {
-	prefix := fmt.Sprintf("traffic.omnimesh.io/v1/TargetRoute/%s/", namespace)
-	resources, err := s.resources.List(ctx, prefix)
+func (s *RouteAppService) Get(ctx context.Context, namespace, name, serviceName, nodeId string) (*model.TargetRoute, error) {
+	key := formatRouteKey(namespace, nodeId, serviceName, name)
+	resource, err := s.resources.Get(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("route get: %w", err)
 	}
-	for _, r := range resources {
-		if r.Metadata.Name == name {
-			return resourceToRoute(r)
-		}
-	}
-	return nil, fmt.Errorf("route get: %s/%s not found", namespace, name)
+	return resourceToRoute(resource)
 }
 
 // List returns all target routes, optionally filtered by namespace.
 func (s *RouteAppService) List(ctx context.Context, namespace string) ([]*model.TargetRoute, error) {
-	prefix := "traffic.omnimesh.io/v1/TargetRoute/"
-	if namespace != "" {
-		prefix += namespace + "/"
-	}
+	prefix := keyPrefix
 
 	resources, err := s.resources.List(ctx, prefix)
 	if err != nil {
@@ -74,6 +68,9 @@ func (s *RouteAppService) List(ctx context.Context, namespace string) ([]*model.
 
 	routes := make([]*model.TargetRoute, 0, len(resources))
 	for _, r := range resources {
+		if namespace != "" && r.Metadata.Namespace != namespace {
+			continue
+		}
 		rt, err := resourceToRoute(r)
 		if err != nil {
 			s.logger.Warn("skipping invalid route resource", "error", err)
@@ -85,30 +82,41 @@ func (s *RouteAppService) List(ctx context.Context, namespace string) ([]*model.
 }
 
 // Delete removes a target route by namespace and name.
-// It scans all routes in the namespace, finds the one with the matching name,
-// and deletes it using the full 4-part key.
-func (s *RouteAppService) Delete(ctx context.Context, namespace, name string) error {
-	prefix := fmt.Sprintf("traffic.omnimesh.io/v1/TargetRoute/%s/", namespace)
-	resources, err := s.resources.List(ctx, prefix)
+func (s *RouteAppService) Delete(ctx context.Context, namespace, name, serviceName, nodeId string) error {
+	key := formatRouteKey(namespace, nodeId, serviceName, name)
+	err := s.resources.Delete(ctx, key)
 	if err != nil {
-		return fmt.Errorf("route delete: list: %w", err)
+		return fmt.Errorf("route delete: %w", err)
 	}
-	for _, r := range resources {
-		if r.Metadata.Name == name {
-			rt, mErr := resourceToRoute(r)
-			if mErr != nil {
-				return fmt.Errorf("route delete: decode: %w", mErr)
-			}
-			key := fmt.Sprintf("traffic.omnimesh.io/v1/TargetRoute/%s/%s/%s/%s",
-				rt.Namespace, rt.NodeID, rt.TargetService, rt.Name)
-			if err := s.resources.Delete(ctx, key); err != nil {
-				return fmt.Errorf("route delete: %w", err)
-			}
-			s.logger.Info("target route deleted", "namespace", namespace, "name", name)
-			return nil
-		}
+
+	s.logger.Info("target route deleted", "namespace", namespace, "name", name)
+	return nil
+}
+
+// DeleteByNodeId removes all target routes for a given node id.
+func (s *RouteAppService) DeleteByNodeId(ctx context.Context, nodeId string) error {
+	key := fmt.Sprintf(keyPrefix+"%s", nodeId)
+	err := s.resources.DeleteByPrefix(ctx, key)
+	if err != nil {
+		return fmt.Errorf("route delete by node id: %w", err)
 	}
-	return fmt.Errorf("route delete: %s/%s not found", namespace, name)
+
+	s.logger.Info("target route deleted", "nodeId", nodeId)
+	return nil
+}
+
+func (s *RouteAppService) ClearRoutes(ctx context.Context) error {
+	err := s.resources.DeleteByPrefix(ctx, keyPrefix)
+	if err != nil {
+		return fmt.Errorf("route clear: %w", err)
+	}
+
+	s.logger.Info("target routes cleared")
+	return nil
+}
+
+func formatRouteKey(namespace, nodeId, serviceName, name string) string {
+	return fmt.Sprintf(keyPrefix+"%s/%s/%s/%s", nodeId, namespace, serviceName, name)
 }
 
 // Compile-time interface check.

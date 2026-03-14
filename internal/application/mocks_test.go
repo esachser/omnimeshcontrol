@@ -9,6 +9,7 @@ import (
 
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
+	"github.com/esachser/omnimeshcontrol/internal/domain/service"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 )
 
@@ -62,6 +63,17 @@ func (m *mockResourceStore) Delete(_ context.Context, key string) error {
 		return domain.ErrResourceNotFound
 	}
 	delete(m.data, key)
+	return nil
+}
+
+func (m *mockResourceStore) DeleteByPrefix(_ context.Context, prefix string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k := range m.data {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			delete(m.data, k)
+		}
+	}
 	return nil
 }
 
@@ -267,8 +279,9 @@ func (m *mockIdentityManager) DeregisterWorkload(_ context.Context, id model.Ser
 // --- Mock NodeTracker ---
 
 type mockNodeTracker struct {
-	mu    sync.Mutex
-	nodes map[string]bool
+	mu        sync.Mutex
+	nodes     map[string]bool
+	callbacks []service.NodeLivenessCallback
 }
 
 func newMockNodeTracker() *mockNodeTracker {
@@ -294,6 +307,11 @@ func (m *mockNodeTracker) IsAlive(nodeID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.nodes[nodeID]
+}
+func (m *mockNodeTracker) RegisterCallback(callback service.NodeLivenessCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.callbacks = append(m.callbacks, callback)
 }
 
 // --- Mock TrafficPolicyStore ---
@@ -442,4 +460,82 @@ func (m *mockDependencyStore) WatchDependencies(_ context.Context) (<-chan outbo
 	ch := make(chan outbound.DependencyEvent)
 	close(ch)
 	return ch, nil
+}
+
+// --- Mock RouteManager ---
+
+type mockRouteManager struct {
+	mu     sync.Mutex
+	routes map[string]*model.TargetRoute
+}
+
+func newMockRouteManager() *mockRouteManager {
+	return &mockRouteManager{routes: make(map[string]*model.TargetRoute)}
+}
+
+func routeManagerKey(namespace, nodeId, serviceName, name string) string {
+	return fmt.Sprintf("%s/%s/%s/%s", namespace, nodeId, serviceName, name)
+}
+
+func (m *mockRouteManager) Apply(_ context.Context, route *model.TargetRoute) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := routeManagerKey(route.Namespace, route.NodeID, route.TargetService, route.Name)
+	cp := *route
+	m.routes[key] = &cp
+	return nil
+}
+
+func (m *mockRouteManager) Get(_ context.Context, namespace, name, serviceName, nodeId string) (*model.TargetRoute, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := routeManagerKey(namespace, nodeId, serviceName, name)
+	r, ok := m.routes[key]
+	if !ok {
+		return nil, domain.ErrResourceNotFound
+	}
+	cp := *r
+	return &cp, nil
+}
+
+func (m *mockRouteManager) List(_ context.Context, namespace string) ([]*model.TargetRoute, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []*model.TargetRoute
+	for _, r := range m.routes {
+		if namespace == "" || r.Namespace == namespace {
+			cp := *r
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockRouteManager) Delete(_ context.Context, namespace, name, serviceName, nodeId string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := routeManagerKey(namespace, nodeId, serviceName, name)
+	if _, ok := m.routes[key]; !ok {
+		return domain.ErrResourceNotFound
+	}
+	delete(m.routes, key)
+	return nil
+}
+
+func (m *mockRouteManager) DeleteByNodeId(_ context.Context, nodeId string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, r := range m.routes {
+		if r.NodeID == nodeId {
+			delete(m.routes, key)
+		}
+	}
+	return nil
+}
+
+func (m *mockRouteManager) ClearRoutes(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.routes = make(map[string]*model.TargetRoute)
+	return nil
 }

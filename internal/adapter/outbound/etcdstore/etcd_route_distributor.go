@@ -65,7 +65,6 @@ const targetRoutePrefix = "traffic.omnimesh.io/v1/TargetRoute/"
 // startup and kept current via a background watch goroutine. This means:
 //   - AnnounceRoute / WithdrawRoute are durable — routes survive restarts.
 //   - AllRoutes is always a fast, lock-free in-memory read.
-//   - Routes written by RouteAppService (e.g. via CLI) are automatically reflected.
 type EtcdRouteDistributor struct {
 	resources outbound.ResourceStore
 	logger    *slog.Logger
@@ -213,7 +212,7 @@ func (d *EtcdRouteDistributor) handleEvent(event outbound.ResourceEvent) {
 }
 
 func targetRouteKey(namespace, nodeID, targetService, name string) string {
-	return targetRoutePrefix + namespace + "/" + nodeID + "/" + targetService + "/" + name
+	return targetRoutePrefix + nodeID + "/" + namespace + "/" + targetService + "/" + name
 }
 
 // Compile-time interface check.

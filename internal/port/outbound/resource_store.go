@@ -42,6 +42,8 @@ type ResourceStore interface {
 	List(ctx context.Context, prefix string) ([]*model.Resource, error)
 	// Delete removes a resource by key.
 	Delete(ctx context.Context, key string) error
+	// DeleteByPrefix removes all resources under a key prefix.
+	DeleteByPrefix(ctx context.Context, prefix string) error
 	// Watch returns a channel of events for resources under the given prefix.
 	// The channel is closed when the context is cancelled.
 	Watch(ctx context.Context, prefix string) (<-chan ResourceEvent, error)

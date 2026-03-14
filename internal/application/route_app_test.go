@@ -24,7 +24,7 @@ func TestRouteAppService_ApplyAndGet(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	got, err := app.Get(ctx, "production", "order-route")
+	got, err := app.Get(ctx, "production", "order-route", "order-service", "node-1")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -116,11 +116,11 @@ func TestRouteAppService_Delete(t *testing.T) {
 	route := &model.TargetRoute{Name: "test-route", Namespace: "default", NodeID: "node-1", TargetService: "svc"}
 	app.Apply(ctx, route)
 
-	if err := app.Delete(ctx, "default", "test-route"); err != nil {
+	if err := app.Delete(ctx, "default", "test-route", "svc", "node-1"); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 
-	_, err := app.Get(ctx, "default", "test-route")
+	_, err := app.Get(ctx, "default", "test-route", "svc", "node-1")
 	if err == nil {
 		t.Error("Get() after Delete() should fail")
 	}

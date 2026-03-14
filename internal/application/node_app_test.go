@@ -11,7 +11,7 @@ import (
 func TestNodeAppService_RegisterAndDeregister(t *testing.T) {
 	state := newMockStateStore()
 	tracker := newMockNodeTracker()
-	app := NewNodeAppService(state, tracker, nil)
+	app := NewNodeAppService(state, tracker, newMockRouteManager(), nil)
 	ctx := context.Background()
 
 	node := &model.Node{
@@ -51,7 +51,7 @@ func TestNodeAppService_RegisterAndDeregister(t *testing.T) {
 func TestNodeAppService_StreamDisconnectAndReconnect(t *testing.T) {
 	state := newMockStateStore()
 	tracker := newMockNodeTracker()
-	app := NewNodeAppService(state, tracker, nil)
+	app := NewNodeAppService(state, tracker, newMockRouteManager(), nil)
 	ctx := context.Background()
 
 	node := &model.Node{
@@ -80,7 +80,7 @@ func TestNodeAppService_StreamDisconnectAndReconnect(t *testing.T) {
 func TestNodeAppService_UpdateNodeServices(t *testing.T) {
 	state := newMockStateStore()
 	tracker := newMockNodeTracker()
-	app := NewNodeAppService(state, tracker, nil)
+	app := NewNodeAppService(state, tracker, newMockRouteManager(), nil)
 	ctx := context.Background()
 
 	node := &model.Node{

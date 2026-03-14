@@ -112,6 +112,15 @@ func (s *EtcdResourceStore) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// DeleteByPrefix removes all resources under a key prefix.
+func (s *EtcdResourceStore) DeleteByPrefix(ctx context.Context, prefix string) error {
+	_, err := s.client.Delete(ctx, s.fullKey(prefix), clientv3.WithPrefix())
+	if err != nil {
+		return fmt.Errorf("resource store: delete by prefix %q: %w", prefix, err)
+	}
+	return nil
+}
+
 // Watch returns a channel of events for resources under the given prefix.
 func (s *EtcdResourceStore) Watch(ctx context.Context, prefix string) (<-chan outbound.ResourceEvent, error) {
 	watchCh := s.client.Watch(ctx, s.fullKey(prefix), clientv3.WithPrefix(), clientv3.WithPrevKV())

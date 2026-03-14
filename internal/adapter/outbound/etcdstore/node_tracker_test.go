@@ -8,7 +8,7 @@ import (
 )
 
 func TestNodeLivenessTracker_TrackAndAlive(t *testing.T) {
-	tracker := NewNodeLivenessTracker(5*time.Second, nil, nil)
+	tracker := NewNodeLivenessTracker(5*time.Second, nil)
 
 	tracker.TrackNode("node-1")
 	if !tracker.IsAlive("node-1") {
@@ -22,9 +22,10 @@ func TestNodeLivenessTracker_TrackAndAlive(t *testing.T) {
 func TestNodeLivenessTracker_GracePeriodExpiry(t *testing.T) {
 	var lostNodeID atomic.Value
 
-	tracker := NewNodeLivenessTracker(100*time.Millisecond, func(_ context.Context, nodeID string) {
+	tracker := NewNodeLivenessTracker(100*time.Millisecond, nil)
+	tracker.RegisterCallback(func(_ context.Context, nodeID string) {
 		lostNodeID.Store(nodeID)
-	}, nil)
+	})
 
 	tracker.TrackNode("node-1")
 	tracker.OnDisconnect("node-1")
@@ -45,9 +46,10 @@ func TestNodeLivenessTracker_GracePeriodExpiry(t *testing.T) {
 func TestNodeLivenessTracker_ReconnectCancelsGrace(t *testing.T) {
 	var lostCalled atomic.Int32
 
-	tracker := NewNodeLivenessTracker(200*time.Millisecond, func(_ context.Context, _ string) {
+	tracker := NewNodeLivenessTracker(200*time.Millisecond, nil)
+	tracker.RegisterCallback(func(_ context.Context, _ string) {
 		lostCalled.Add(1)
-	}, nil)
+	})
 
 	tracker.TrackNode("node-1")
 	tracker.OnDisconnect("node-1")
@@ -71,9 +73,10 @@ func TestNodeLivenessTracker_ReconnectCancelsGrace(t *testing.T) {
 func TestNodeLivenessTracker_UntrackNode(t *testing.T) {
 	var lostCalled atomic.Int32
 
-	tracker := NewNodeLivenessTracker(100*time.Millisecond, func(_ context.Context, _ string) {
+	tracker := NewNodeLivenessTracker(100*time.Millisecond, nil)
+	tracker.RegisterCallback(func(_ context.Context, _ string) {
 		lostCalled.Add(1)
-	}, nil)
+	})
 
 	tracker.TrackNode("node-1")
 	tracker.UntrackNode("node-1")
@@ -90,7 +93,7 @@ func TestNodeLivenessTracker_UntrackNode(t *testing.T) {
 }
 
 func TestNodeLivenessTracker_ConnectedNodes(t *testing.T) {
-	tracker := NewNodeLivenessTracker(5*time.Second, nil, nil)
+	tracker := NewNodeLivenessTracker(5*time.Second, nil)
 
 	tracker.TrackNode("node-1")
 	tracker.TrackNode("node-2")

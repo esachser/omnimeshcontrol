@@ -2,7 +2,6 @@ package application
 
 import (
 	"context"
-	"net/netip"
 	"testing"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
@@ -17,7 +16,7 @@ func TestNodeAppService_RegisterAndDeregister(t *testing.T) {
 	node := &model.Node{
 		ID:       "node-1",
 		Platform: model.NodePlatformLinux,
-		Addr:     netip.MustParseAddrPort("10.0.0.1:9090"),
+		Addr:     "10.0.0.1:9090",
 	}
 
 	// Register.

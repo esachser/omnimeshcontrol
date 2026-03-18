@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/netip"
 	"sync"
 	"time"
 
@@ -77,15 +76,12 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 	s.activeStreams[nodeID] = stream
 	s.mu.Unlock()
 
-	// Parse address.
-	addr, _ := netip.ParseAddrPort(reg.Addr)
-
 	// Build node model.
 	node := &model.Node{
 		ID:       nodeID,
 		Platform: platformFromString(reg.Platform),
 		Target:   reg.Target,
-		Addr:     addr,
+		Addr:     reg.Addr,
 		Labels:   reg.Labels,
 	}
 
@@ -284,7 +280,7 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 				{
 					NodeId: route.NodeID,
 					Labels: route.Labels,
-					Addr:   route.Address.String(),
+					Addr:   route.Address,
 				},
 			},
 		}
@@ -356,7 +352,7 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 				{
 					NodeId: route.NodeID,
 					Labels: route.Labels,
-					Addr:   route.Address.String(),
+					Addr:   route.Address,
 				},
 			},
 		}

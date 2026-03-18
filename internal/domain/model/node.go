@@ -1,7 +1,5 @@
 package model
 
-import "net/netip"
-
 // NodeStatus indicates the lifecycle state of an agent node.
 type NodeStatus int
 
@@ -63,7 +61,7 @@ type Node struct {
 	// Target is the NetworkTarget this node belongs to.
 	Target string
 	// Addr is the network address of the node's agent (used for HBONE tunneling).
-	Addr netip.AddrPort
+	Addr string
 	// Status indicates the lifecycle state of the node.
 	Status NodeStatus
 	// Labels are arbitrary key-value pairs for organization and selection.

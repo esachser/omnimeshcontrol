@@ -1,7 +1,5 @@
 package model
 
-import "net/netip"
-
 // NetworkTarget represents a distinct routing domain (an isolated network)
 // where internal IPs are routable between nodes within the target, but not from the outside.
 // Example: a single Kubernetes cluster or a single VNet.
@@ -27,5 +25,5 @@ type TargetRoute struct {
 	// NodeID is the ID of the node this route is associated with.
 	NodeID string
 	// Address is the address of the node this route is associated with.
-	Address netip.AddrPort
+	Address string
 }

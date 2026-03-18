@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/netip"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
@@ -133,9 +132,7 @@ func (s *AgentScopeAppService) GetAgentScope(ctx context.Context, nodeID string)
 				if destNode.Target != reqTarget && destNode.Target != "" {
 					netTarget, tErr := s.targets.Get(ctx, destNode.Target)
 					if tErr == nil && netTarget != nil && netTarget.GatewayAddress != "" {
-						if ipAddr, aErr := netip.ParseAddrPort(netTarget.GatewayAddress); aErr == nil {
-							routeCopy.Address = ipAddr
-						}
+						routeCopy.Address = netTarget.GatewayAddress
 					}
 				}
 			}

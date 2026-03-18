@@ -19,7 +19,7 @@ type NodeEndpoint struct {
 	// NodeID is the unique identifier of the agent node.
 	NodeID string
 	// Addr is the network address of the agent (for HBONE tunnel establishment).
-	Addr netip.AddrPort
+	Addr string
 	// Target is the locality (NetworkTarget) of this node.
 	Target string
 	// Labels are the metadata tags for this node, used for subset routing.

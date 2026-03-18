@@ -103,7 +103,9 @@ func run(logger *slog.Logger) error {
 	// 	}
 	// })
 
-	routeApp := application.NewRouteAppService(resourceStore, logger)
+	targetApp := application.NewTargetAppService(resourceStore, logger)
+
+	routeApp := application.NewRouteAppService(resourceStore, stateStore, targetApp, logger)
 	nodeApp := application.NewNodeAppService(stateStore, nodeTracker, routeApp, logger)
 
 	validator := domainservice.NewPolicyValidator()
@@ -111,7 +113,6 @@ func run(logger *slog.Logger) error {
 
 	healthApp := application.NewHealthAppService(healthStore, stateStore, routeDistributor, logger)
 
-	targetApp := application.NewTargetAppService(resourceStore, logger)
 	scopeApp := application.NewAgentScopeAppService(
 		resourceStore,
 		stateStore,
@@ -132,6 +133,8 @@ func run(logger *slog.Logger) error {
 	grpcServer := grpc.NewServer()
 	controlServer := grpcadapter.NewControlPlaneServer(svcApp, nsApp, targetApp, policyApp, logger)
 	agentServer := grpcadapter.NewAgentServer(nodeApp, healthApp, scopeApp, routeApp, logger)
+
+	routeApp.SetScopeDistributor(agentServer)
 
 	policyUpdates := application.NewTrafficPolicyUpdateService(policyStore, agentServer, logger.WithGroup("policy_updates"))
 	go func() {

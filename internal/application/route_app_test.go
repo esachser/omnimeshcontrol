@@ -9,7 +9,7 @@ import (
 
 func TestRouteAppService_ApplyAndGet(t *testing.T) {
 	resources := newMockResourceStore()
-	app := NewRouteAppService(resources, nil)
+	app := NewRouteAppService(resources, nil, nil, nil)
 	ctx := context.Background()
 
 	route := &model.TargetRoute{
@@ -42,7 +42,7 @@ func TestRouteAppService_ApplyAndGet(t *testing.T) {
 
 func TestRouteAppService_ApplyValidation(t *testing.T) {
 	resources := newMockResourceStore()
-	app := NewRouteAppService(resources, nil)
+	app := NewRouteAppService(resources, nil, nil, nil)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -110,7 +110,7 @@ func TestRouteAppService_ApplyValidation(t *testing.T) {
 
 func TestRouteAppService_Delete(t *testing.T) {
 	resources := newMockResourceStore()
-	app := NewRouteAppService(resources, nil)
+	app := NewRouteAppService(resources, nil, nil, nil)
 	ctx := context.Background()
 
 	route := &model.TargetRoute{Name: "test-route", Namespace: "default", NodeID: "node-1", TargetService: "svc"}
@@ -128,7 +128,7 @@ func TestRouteAppService_Delete(t *testing.T) {
 
 func TestRouteAppService_List(t *testing.T) {
 	resources := newMockResourceStore()
-	app := NewRouteAppService(resources, nil)
+	app := NewRouteAppService(resources, nil, nil, nil)
 	ctx := context.Background()
 
 	// Apply routes in different namespaces

@@ -129,10 +129,11 @@ func (s *AgentScopeAppService) GetAgentScope(ctx context.Context, nodeID string)
 			destNode, nErr := s.state.GetNode(ctx, tr.NodeID)
 			if nErr == nil && destNode != nil {
 				routeCopy.Address = destNode.Addr
+				routeCopy.Target = destNode.Target
 				if destNode.Target != reqTarget && destNode.Target != "" {
 					netTarget, tErr := s.targets.Get(ctx, destNode.Target)
 					if tErr == nil && netTarget != nil && netTarget.GatewayAddress != "" {
-						routeCopy.Address = netTarget.GatewayAddress
+						routeCopy.TargetAddress = netTarget.GatewayAddress
 					}
 				}
 			}

@@ -26,4 +26,8 @@ type TargetRoute struct {
 	NodeID string
 	// Address is the address of the node this route is associated with.
 	Address string
+	// Target is the NetworkTarget this route is associated with.
+	Target string
+	// TargetAddress is the address of the target this route is associated with.
+	TargetAddress string
 }

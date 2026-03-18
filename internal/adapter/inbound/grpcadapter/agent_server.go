@@ -350,9 +350,12 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 			ServiceName: route.TargetService,
 			TargetNodes: []*omnimeshv1.NodeEndpointInfo{
 				{
-					NodeId: route.NodeID,
-					Labels: route.Labels,
-					Addr:   route.Address,
+					NodeId:        route.NodeID,
+					Labels:        route.Labels,
+					Addr:          route.Address,
+					RouteName:     route.Name,
+					Target:        route.Target,
+					TargetAddress: route.TargetAddress,
 				},
 			},
 		}
@@ -482,14 +485,27 @@ func (s *AgentServer) BroadcastUpdate(ctx context.Context, update model.ScopeUpd
 
 	protoUpdate := scopeUpdateToProto(update)
 
-	var errs []error
+	var (
+		errs []error
+		mu   sync.Mutex
+		wg   sync.WaitGroup
+	)
+
 	for nodeID, stream := range streams {
-		if err := stream.Send(&omnimeshv1.AgentStreamResponse{
-			Payload: &omnimeshv1.AgentStreamResponse_ScopeUpdate{ScopeUpdate: protoUpdate},
-		}); err != nil {
-			errs = append(errs, fmt.Errorf("node %s: %w", nodeID, err))
-		}
+		wg.Add(1)
+		go func(nID string, st omnimeshv1.AgentService_AgentStreamServer) {
+			defer wg.Done()
+			if err := st.Send(&omnimeshv1.AgentStreamResponse{
+				Payload: &omnimeshv1.AgentStreamResponse_ScopeUpdate{ScopeUpdate: protoUpdate},
+			}); err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("node %s: %w", nID, err))
+				mu.Unlock()
+			}
+		}(nodeID, stream)
 	}
+
+	wg.Wait()
 
 	if len(errs) > 0 {
 		return fmt.Errorf("broadcast scope update: %w", errors.Join(errs...))

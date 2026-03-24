@@ -176,57 +176,6 @@ func resourceToTarget(r *model.Resource) (*model.NetworkTarget, error) {
 	return t, nil
 }
 
-// routeSpec is the JSON spec representation for TargetRoute resources.
-type routeSpec struct {
-	TargetService string            `json:"targetService,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	NodeID        string            `json:"nodeID,omitempty"`
-}
-
-// routeToResource converts a domain TargetRoute to a generic Resource for storage.
-func routeToResource(rt *model.TargetRoute) *model.Resource {
-	spec := routeSpec{
-		TargetService: rt.TargetService,
-		Labels:        rt.Labels,
-		NodeID:        rt.NodeID,
-	}
-	specJSON, _ := json.Marshal(spec)
-
-	return &model.Resource{
-		APIVersion: "traffic.omnimesh.io/v1",
-		Kind:       "TargetRoute",
-		Metadata: model.ResourceMetadata{
-			Name:      rt.Name,
-			Namespace: rt.Namespace,
-		},
-		Spec: specJSON,
-	}
-}
-
-// resourceToRoute converts a generic Resource back to a domain TargetRoute.
-func resourceToRoute(r *model.Resource) (*model.TargetRoute, error) {
-	if r.Kind != "TargetRoute" {
-		return nil, fmt.Errorf("expected kind TargetRoute, got %s", r.Kind)
-	}
-
-	var spec routeSpec
-	if len(r.Spec) > 0 {
-		if err := json.Unmarshal(r.Spec, &spec); err != nil {
-			return nil, fmt.Errorf("unmarshal route spec: %w", err)
-		}
-	}
-
-	rt := &model.TargetRoute{
-		Name:          r.Metadata.Name,
-		Namespace:     r.Metadata.Namespace,
-		TargetService: spec.TargetService,
-		Labels:        spec.Labels,
-		NodeID:        spec.NodeID,
-	}
-
-	return rt, nil
-}
-
 // trafficRouteDestinationSpec is the JSON representation for TrafficRouteDestination.
 type trafficRouteDestinationSpec struct {
 	Target string            `json:"target,omitempty"`

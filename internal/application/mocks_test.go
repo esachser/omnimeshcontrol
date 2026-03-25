@@ -103,6 +103,7 @@ type mockStateStore struct {
 	ips    map[string]netip.Addr
 	nodes  map[string]*model.Node
 	nextIP netip.Addr
+	routes map[string]*model.TargetRoute
 }
 
 func newMockStateStore() *mockStateStore {
@@ -110,6 +111,7 @@ func newMockStateStore() *mockStateStore {
 		ips:    make(map[string]netip.Addr),
 		nodes:  make(map[string]*model.Node),
 		nextIP: netip.MustParseAddr("100.64.0.1"),
+		routes: make(map[string]*model.TargetRoute),
 	}
 }
 
@@ -183,6 +185,85 @@ func (m *mockStateStore) DeregisterNode(_ context.Context, nodeID string) error 
 	}
 	delete(m.nodes, nodeID)
 	return nil
+}
+
+func (m *mockStateStore) formatMockRouteKey(namespace, nodeID, serviceName, name string) string {
+	return nodeID + "/" + namespace + "/" + serviceName + "/" + name
+}
+
+func (m *mockStateStore) PersistTargetRoute(_ context.Context, route *model.TargetRoute) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := m.formatMockRouteKey(route.Namespace, route.NodeID, route.TargetService, route.Name)
+	if m.routes == nil {
+		m.routes = make(map[string]*model.TargetRoute)
+	}
+	m.routes[key] = route
+	return nil
+}
+
+func (m *mockStateStore) DeleteTargetRoute(_ context.Context, namespace, nodeID, serviceName, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := m.formatMockRouteKey(namespace, nodeID, serviceName, name)
+	delete(m.routes, key)
+	return nil
+}
+
+func (m *mockStateStore) GetTargetRoute(_ context.Context, namespace, nodeID, serviceName, name string) (*model.TargetRoute, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := m.formatMockRouteKey(namespace, nodeID, serviceName, name)
+	if rt, ok := m.routes[key]; ok {
+		return rt, nil
+	}
+	return nil, domain.ErrResourceNotFound
+}
+
+func (m *mockStateStore) ListTargetRoutes(_ context.Context, namespace string) ([]*model.TargetRoute, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*model.TargetRoute
+	for _, rt := range m.routes {
+		if namespace == "" || rt.Namespace == namespace {
+			out = append(out, rt)
+		}
+	}
+	return out, nil
+}
+
+func (m *mockStateStore) ListTargetRoutesByNode(_ context.Context, nodeID string) ([]*model.TargetRoute, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*model.TargetRoute
+	for _, rt := range m.routes {
+		if rt.NodeID == nodeID {
+			out = append(out, rt)
+		}
+	}
+	return out, nil
+}
+
+func (m *mockStateStore) DeleteTargetRoutesByNode(_ context.Context, nodeID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, rt := range m.routes {
+		if rt.NodeID == nodeID {
+			delete(m.routes, k)
+		}
+	}
+	return nil
+}
+
+func (m *mockStateStore) ClearTargetRoutes(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.routes = make(map[string]*model.TargetRoute)
+	return nil
+}
+
+func (m *mockStateStore) WatchTargetRoutes(_ context.Context) (<-chan outbound.TargetRouteStateEvent, error) {
+	return nil, nil
 }
 
 func (m *mockStateStore) IsLeader() bool                                         { return true }

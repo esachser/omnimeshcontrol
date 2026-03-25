@@ -12,8 +12,8 @@ func TestEtcdRouteDistributor_AnnounceAndAllRoutes(t *testing.T) {
 	embedded, cleanup := testEmbedded(t)
 	defer cleanup()
 
-	resourceStore := NewEtcdResourceStore(embedded.Client())
-	dist := NewEtcdRouteDistributor(resourceStore, nil)
+	stateStore, _ := NewEtcdStateStore(embedded.Client())
+	dist := NewEtcdRouteDistributor(stateStore, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -21,6 +21,8 @@ func TestEtcdRouteDistributor_AnnounceAndAllRoutes(t *testing.T) {
 	// Start Run in background.
 	runDone := make(chan error, 1)
 	go func() { runDone <- dist.Run(ctx) }()
+
+	time.Sleep(200 * time.Millisecond) // Give watch time to start
 
 	route := model.TargetRoute{
 		Name:          "route-1",
@@ -50,8 +52,8 @@ func TestEtcdRouteDistributor_WithdrawRoute(t *testing.T) {
 	embedded, cleanup := testEmbedded(t)
 	defer cleanup()
 
-	resourceStore := NewEtcdResourceStore(embedded.Client())
-	dist := NewEtcdRouteDistributor(resourceStore, nil)
+	stateStore, _ := NewEtcdStateStore(embedded.Client())
+	dist := NewEtcdRouteDistributor(stateStore, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -97,7 +99,7 @@ func TestEtcdRouteDistributor_SeedFromExistingEtcdData(t *testing.T) {
 	embedded, cleanup := testEmbedded(t)
 	defer cleanup()
 
-	resourceStore := NewEtcdResourceStore(embedded.Client())
+	stateStore, _ := NewEtcdStateStore(embedded.Client())
 	ctx := context.Background()
 
 	// Write a route BEFORE Run is called (simulates a restart with existing data).
@@ -107,11 +109,11 @@ func TestEtcdRouteDistributor_SeedFromExistingEtcdData(t *testing.T) {
 		TargetService: "svc",
 		NodeID:        "node-z",
 	}
-	if _, err := resourceStore.Put(ctx, targetRouteKey(pre.Namespace, pre.NodeID, pre.TargetService, pre.Name), routeToResource(&pre)); err != nil {
+	if err := stateStore.PersistTargetRoute(ctx, &pre); err != nil {
 		t.Fatalf("pre-seed Put() error = %v", err)
 	}
 
-	dist := NewEtcdRouteDistributor(resourceStore, nil)
+	dist := NewEtcdRouteDistributor(stateStore, nil)
 
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

@@ -21,6 +21,7 @@ const (
 	ipNextKey        = statePrefix + "ip-next" // 4 bytes: next IP to allocate
 	ipFreeKey        = statePrefix + "ip-free" // JSON array of freed IPs (for reuse)
 	nodePrefix       = statePrefix + "nodes/"
+	routePrefix      = statePrefix + "routes/"
 	leaderElectionPf = "/omnimesh/leader/"
 )
 
@@ -449,6 +450,149 @@ func (s *EtcdStateStore) LeaderAddr() string {
 		return ""
 	}
 	return string(resp.Kvs[0].Value)
+}
+
+// PersistTargetRoute persists a target route reported by a node.
+func (s *EtcdStateStore) PersistTargetRoute(ctx context.Context, route *model.TargetRoute) error {
+	data, err := json.Marshal(route)
+	if err != nil {
+		return fmt.Errorf("state store: marshal target route: %w", err)
+	}
+	key := formatTargetRouteKey(route.Namespace, route.NodeID, route.TargetService, route.Name)
+	if _, err := s.client.Put(ctx, key, string(data)); err != nil {
+		return fmt.Errorf("state store: persist target route %q: %w", key, err)
+	}
+	return nil
+}
+
+// DeleteTargetRoute removes a specific target route.
+func (s *EtcdStateStore) DeleteTargetRoute(ctx context.Context, namespace, nodeID, serviceName, name string) error {
+	key := formatTargetRouteKey(namespace, nodeID, serviceName, name)
+	if _, err := s.client.Delete(ctx, key); err != nil {
+		return fmt.Errorf("state store: delete target route %q: %w", key, err)
+	}
+	return nil
+}
+
+// GetTargetRoute retrieves a specific target route.
+func (s *EtcdStateStore) GetTargetRoute(ctx context.Context, namespace, nodeID, serviceName, name string) (*model.TargetRoute, error) {
+	key := formatTargetRouteKey(namespace, nodeID, serviceName, name)
+	resp, err := s.client.Get(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("state store: get target route %q: %w", key, err)
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, domain.ErrResourceNotFound
+	}
+	var route model.TargetRoute
+	if err := json.Unmarshal(resp.Kvs[0].Value, &route); err != nil {
+		return nil, fmt.Errorf("state store: unmarshal target route %q: %w", key, err)
+	}
+	return &route, nil
+}
+
+// ListTargetRoutes returns all target routes, optionally filtered by namespace.
+func (s *EtcdStateStore) ListTargetRoutes(ctx context.Context, namespace string) ([]*model.TargetRoute, error) {
+	resp, err := s.client.Get(ctx, routePrefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, fmt.Errorf("state store: list target routes: %w", err)
+	}
+
+	var routes []*model.TargetRoute
+	for _, kv := range resp.Kvs {
+		var route model.TargetRoute
+		if err := json.Unmarshal(kv.Value, &route); err != nil {
+			continue
+		}
+		if namespace != "" && route.Namespace != namespace {
+			continue
+		}
+		routes = append(routes, &route)
+	}
+	return routes, nil
+}
+
+// ListTargetRoutesByNode retrieves all target routes associated with a specific node.
+func (s *EtcdStateStore) ListTargetRoutesByNode(ctx context.Context, nodeID string) ([]*model.TargetRoute, error) {
+	prefix := routePrefix + nodeID + "/"
+	resp, err := s.client.Get(ctx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, fmt.Errorf("state store: list target routes by node %q: %w", nodeID, err)
+	}
+
+	var routes []*model.TargetRoute
+	for _, kv := range resp.Kvs {
+		var route model.TargetRoute
+		if err := json.Unmarshal(kv.Value, &route); err == nil {
+			routes = append(routes, &route)
+		}
+	}
+	return routes, nil
+}
+
+// DeleteTargetRoutesByNode removes all target routes associated with a specific node.
+func (s *EtcdStateStore) DeleteTargetRoutesByNode(ctx context.Context, nodeID string) error {
+	prefix := routePrefix + nodeID + "/"
+	if _, err := s.client.Delete(ctx, prefix, clientv3.WithPrefix()); err != nil {
+		return fmt.Errorf("state store: delete target routes by node %q: %w", nodeID, err)
+	}
+	return nil
+}
+
+// ClearTargetRoutes removes all target routes.
+func (s *EtcdStateStore) ClearTargetRoutes(ctx context.Context) error {
+	if _, err := s.client.Delete(ctx, routePrefix, clientv3.WithPrefix()); err != nil {
+		return fmt.Errorf("state store: clear target routes: %w", err)
+	}
+	return nil
+}
+
+// WatchTargetRoutes returns a channel of events for target route state changes.
+func (s *EtcdStateStore) WatchTargetRoutes(ctx context.Context) (<-chan outbound.TargetRouteStateEvent, error) {
+	watchCh := s.client.Watch(ctx, routePrefix, clientv3.WithPrefix(), clientv3.WithPrevKV())
+	eventCh := make(chan outbound.TargetRouteStateEvent, 64)
+
+	go func() {
+		defer close(eventCh)
+		for resp := range watchCh {
+			for _, ev := range resp.Events {
+				event := outbound.TargetRouteStateEvent{
+					Key: string(ev.Kv.Key),
+				}
+				switch ev.Type {
+				case clientv3.EventTypePut:
+					event.Type = outbound.StateEventPut
+					var route model.TargetRoute
+					if err := json.Unmarshal(ev.Kv.Value, &route); err == nil {
+						event.Route = &route
+					}
+				case clientv3.EventTypeDelete:
+					event.Type = outbound.StateEventDelete
+					kv := ev.PrevKv
+					if kv == nil {
+						kv = ev.Kv
+					}
+					if kv != nil && len(kv.Value) > 0 {
+						var route model.TargetRoute
+						if err := json.Unmarshal(kv.Value, &route); err == nil {
+							event.Route = &route
+						}
+					}
+				}
+				select {
+				case eventCh <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return eventCh, nil
+}
+
+func formatTargetRouteKey(namespace, nodeID, serviceName, name string) string {
+	return routePrefix + nodeID + "/" + namespace + "/" + serviceName + "/" + name
 }
 
 // Close closes the session.

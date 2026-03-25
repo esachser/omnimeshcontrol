@@ -71,7 +71,7 @@ func run(logger *slog.Logger) error {
 	defer stateStore.Close()
 
 	dnsManager := etcddns.NewEtcdDNSRecordManager(embedded.Client(), dnsZone)
-	routeDistributor := etcdstore.NewEtcdRouteDistributor(resourceStore, logger.WithGroup("route_dist"))
+	routeDistributor := etcdstore.NewEtcdRouteDistributor(stateStore, logger.WithGroup("route_dist"))
 	policyStore := etcdstore.NewEtcdTrafficPolicyStore(resourceStore)
 	healthStore := etcdstore.NewEtcdEndpointHealthStore(embedded.Client())
 	depStore := etcdstore.NewEtcdDependencyStore(embedded.Client())

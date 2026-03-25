@@ -10,8 +10,6 @@ import (
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 )
 
-const keyPrefix = "traffic.omnimesh.io/v1/TargetRoute/"
-
 // RouteAppService implements the RouteManager inbound port.
 type RouteAppService struct {
 	resources   outbound.ResourceStore
@@ -45,9 +43,7 @@ func (s *RouteAppService) Apply(ctx context.Context, route *model.TargetRoute) e
 		return fmt.Errorf("route apply: name, namespace, nodeID and targetService are required")
 	}
 
-	key := formatRouteKey(route.Namespace, route.NodeID, route.TargetService, route.Name)
-
-	if _, err := s.resources.Put(ctx, key, routeToResource(route)); err != nil {
+	if err := s.state.PersistTargetRoute(ctx, route); err != nil {
 		return fmt.Errorf("route apply: %w", err)
 	}
 
@@ -62,36 +58,12 @@ func (s *RouteAppService) Apply(ctx context.Context, route *model.TargetRoute) e
 // Because routes are keyed by {namespace}/{nodeID}/{targetService}/{name},
 // it scans all routes in the namespace and returns the first that matches the name.
 func (s *RouteAppService) Get(ctx context.Context, namespace, name, serviceName, nodeId string) (*model.TargetRoute, error) {
-	key := formatRouteKey(namespace, nodeId, serviceName, name)
-	resource, err := s.resources.Get(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("route get: %w", err)
-	}
-	return resourceToRoute(resource)
+	return s.state.GetTargetRoute(ctx, namespace, nodeId, serviceName, name)
 }
 
 // List returns all target routes, optionally filtered by namespace.
 func (s *RouteAppService) List(ctx context.Context, namespace string) ([]*model.TargetRoute, error) {
-	prefix := keyPrefix
-
-	resources, err := s.resources.List(ctx, prefix)
-	if err != nil {
-		return nil, fmt.Errorf("route list: %w", err)
-	}
-
-	routes := make([]*model.TargetRoute, 0, len(resources))
-	for _, r := range resources {
-		if namespace != "" && r.Metadata.Namespace != namespace {
-			continue
-		}
-		rt, err := resourceToRoute(r)
-		if err != nil {
-			s.logger.Warn("skipping invalid route resource", "error", err)
-			continue
-		}
-		routes = append(routes, rt)
-	}
-	return routes, nil
+	return s.state.ListTargetRoutes(ctx, namespace)
 }
 
 // Delete removes a target route by namespace and name.
@@ -99,8 +71,7 @@ func (s *RouteAppService) Delete(ctx context.Context, namespace, name, serviceNa
 	// Need the route to broadcast deletion
 	route, getErr := s.Get(ctx, namespace, name, serviceName, nodeId)
 
-	key := formatRouteKey(namespace, nodeId, serviceName, name)
-	err := s.resources.Delete(ctx, key)
+	err := s.state.DeleteTargetRoute(ctx, namespace, nodeId, serviceName, name)
 	if err != nil {
 		return fmt.Errorf("route delete: %w", err)
 	}
@@ -116,20 +87,16 @@ func (s *RouteAppService) Delete(ctx context.Context, namespace, name, serviceNa
 
 // DeleteByNodeId removes all target routes for a given node id.
 func (s *RouteAppService) DeleteByNodeId(ctx context.Context, nodeId string) error {
-	key := fmt.Sprintf(keyPrefix+"%s", nodeId)
-
-	// Fetch the routes first so we can broadcast their removal
-	resources, listErr := s.resources.List(ctx, key)
+	// Fetch the routes first so we can broadcast their removal.
+	nodeRoutes, listErr := s.state.ListTargetRoutesByNode(ctx, nodeId)
 	var routesToDelete []model.TargetRoute
 	if listErr == nil {
-		for _, r := range resources {
-			if rt, err := resourceToRoute(r); err == nil && rt != nil {
-				routesToDelete = append(routesToDelete, *rt)
-			}
+		for _, rt := range nodeRoutes {
+			routesToDelete = append(routesToDelete, *rt)
 		}
 	}
 
-	err := s.resources.DeleteByPrefix(ctx, key)
+	err := s.state.DeleteTargetRoutesByNode(ctx, nodeId)
 	if err != nil {
 		return fmt.Errorf("route delete by node id: %w", err)
 	}
@@ -144,17 +111,13 @@ func (s *RouteAppService) DeleteByNodeId(ctx context.Context, nodeId string) err
 }
 
 func (s *RouteAppService) ClearRoutes(ctx context.Context) error {
-	err := s.resources.DeleteByPrefix(ctx, keyPrefix)
+	err := s.state.ClearTargetRoutes(ctx)
 	if err != nil {
 		return fmt.Errorf("route clear: %w", err)
 	}
 
 	s.logger.Info("target routes cleared")
 	return nil
-}
-
-func formatRouteKey(namespace, nodeId, serviceName, name string) string {
-	return fmt.Sprintf(keyPrefix+"%s/%s/%s/%s", nodeId, namespace, serviceName, name)
 }
 
 func (s *RouteAppService) broadcastUpdate(ctx context.Context, route model.TargetRoute, updateType model.ScopeUpdateType) {

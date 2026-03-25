@@ -11,8 +11,9 @@ import (
 // StateStore handles system-derived state and infrastructure-specific operations.
 // The default implementation maps to /omnimesh/state/ keys in etcd.
 //
-// Node liveness is tracked in-memory (not here) — this interface only handles
-// the persistent state transitions (registration, loss, deregistration).
+// Node liveness is tracked via etcd leases (NodeLivenessTracker). Keys for the
+// node record and its target routes are attached to the same lease so that etcd
+// cleans them up atomically when the lease expires or is revoked.
 type StateStore interface {
 	// AllocateIP atomically allocates a mesh IP for the given service from the CIDR.
 	// Returns domain.ErrIPExhausted if no IPs are available, or domain.ErrIPConflict
@@ -30,17 +31,10 @@ type StateStore interface {
 	// Returns domain.ErrNodeNotFound if the node does not exist.
 	GetNode(ctx context.Context, nodeID string) (*model.Node, error)
 
-	// PersistNode persists a node's state to durable storage (e.g., etcd).
-	// Called on initial registration and on state changes.
-	PersistNode(ctx context.Context, nodeID string, node *model.Node) error
-
-	// MarkNodeLost updates a node's persistent state to LOST.
-	// Called after the in-memory grace period timer expires.
-	MarkNodeLost(ctx context.Context, nodeID string) error
-
-	// DeregisterNode removes a node from persistent storage.
-	// Called when an agent gracefully shuts down.
-	DeregisterNode(ctx context.Context, nodeID string) error
+	// PersistNode persists a node's state to durable storage.
+	// leaseID must be the etcd lease ID returned by NodeTracker.TrackNode so the
+	// key is automatically removed when the lease expires or is revoked.
+	PersistNode(ctx context.Context, nodeID string, node *model.Node, leaseID int64) error
 
 	// IsLeader reports whether this control plane instance is the current Raft leader.
 	IsLeader() bool
@@ -52,7 +46,9 @@ type StateStore interface {
 	LeaderAddr() string
 
 	// PersistTargetRoute persists a target route reported by a node.
-	PersistTargetRoute(ctx context.Context, route *model.TargetRoute) error
+	// leaseID must be the etcd lease ID for the node that reported this route so
+	// the route key is automatically removed when the node's lease expires.
+	PersistTargetRoute(ctx context.Context, route *model.TargetRoute, leaseID int64) error
 
 	// DeleteTargetRoute removes a specific target route.
 	DeleteTargetRoute(ctx context.Context, namespace, nodeID, serviceName, name string) error
@@ -65,9 +61,6 @@ type StateStore interface {
 
 	// ListTargetRoutesByNode retrieves all target routes associated with a specific node.
 	ListTargetRoutesByNode(ctx context.Context, nodeID string) ([]*model.TargetRoute, error)
-
-	// DeleteTargetRoutesByNode removes all target routes associated with a specific node.
-	DeleteTargetRoutesByNode(ctx context.Context, nodeID string) error
 
 	// ClearTargetRoutes removes all target routes.
 	ClearTargetRoutes(ctx context.Context) error

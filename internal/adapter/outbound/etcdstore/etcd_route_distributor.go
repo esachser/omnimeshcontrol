@@ -17,9 +17,11 @@ import (
 // background watch goroutine. This means:
 //   - AnnounceRoute / WithdrawRoute are durable — routes survive restarts.
 //   - AllRoutes is always a fast, lock-free in-memory read.
+//   - DELETE events (including those from lease expiry) are broadcast to agents.
 type EtcdRouteDistributor struct {
-	stateStore outbound.StateStore
-	logger     *slog.Logger
+	stateStore  outbound.StateStore
+	distributor outbound.ScopeDistributor // set via SetScopeDistributor; may be nil
+	logger      *slog.Logger
 
 	mu     sync.RWMutex
 	routes map[string]model.TargetRoute // keyed by full etcd key
@@ -38,10 +40,21 @@ func NewEtcdRouteDistributor(stateStore outbound.StateStore, logger *slog.Logger
 	}
 }
 
+// SetScopeDistributor sets the distributor used to broadcast route removal
+// events to agents (e.g. when a node's lease expires). Must be called before
+// Run() to take effect. Set to nil to disable broadcasting.
+func (d *EtcdRouteDistributor) SetScopeDistributor(dist outbound.ScopeDistributor) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.distributor = dist
+}
+
 // AnnounceRoute persists a TargetRoute to etcd.
 // The in-memory cache is updated by the watch goroutine.
 func (d *EtcdRouteDistributor) AnnounceRoute(ctx context.Context, route model.TargetRoute) error {
-	if err := d.stateStore.PersistTargetRoute(ctx, &route); err != nil {
+	// Pass leaseID=0: the distributor announces routes from a global perspective,
+	// not tied to a single node's connection lease.
+	if err := d.stateStore.PersistTargetRoute(ctx, &route, 0); err != nil {
 		return fmt.Errorf("etcd route distributor: announce %q: %w", route.Name, err)
 	}
 	d.logger.Info("target route announced",
@@ -127,15 +140,34 @@ func (d *EtcdRouteDistributor) loadAll(ctx context.Context) error {
 
 func (d *EtcdRouteDistributor) handleEvent(event outbound.TargetRouteStateEvent) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 
 	switch event.Type {
 	case outbound.StateEventPut:
 		if event.Route != nil {
 			d.routes[event.Key] = *event.Route
 		}
+		d.mu.Unlock()
+
 	case outbound.StateEventDelete:
+		// Capture the route before removing it so we can broadcast.
+		deleted, had := d.routes[event.Key]
 		delete(d.routes, event.Key)
+		dist := d.distributor
+		d.mu.Unlock()
+
+		if had && dist != nil {
+			update := model.ScopeUpdate{
+				Type:   model.ScopeUpdateRemove,
+				Routes: []model.TargetRoute{deleted},
+			}
+			if err := dist.BroadcastUpdate(context.Background(), update); err != nil {
+				d.logger.Warn("route distributor: broadcast remove failed",
+					"route", deleted.Name,
+					"nodeID", deleted.NodeID,
+					"error", err,
+				)
+			}
+		}
 	}
 }
 

@@ -291,25 +291,18 @@ func TestEtcdStateStore_NodeLifecycle(t *testing.T) {
 		Status:   model.NodeStatusActive,
 	}
 
-	// Persist node.
-	if err := stateStore.PersistNode(ctx, "node-1", node); err != nil {
+	// Persist node (leaseID=0: not attached to a node lease in this low-level test).
+	if err := stateStore.PersistNode(ctx, "node-1", node, 0); err != nil {
 		t.Fatalf("PersistNode() error = %v", err)
 	}
 
-	// Mark node as lost.
-	if err := stateStore.MarkNodeLost(ctx, "node-1"); err != nil {
-		t.Fatalf("MarkNodeLost() error = %v", err)
+	// Verify node can be retrieved.
+	got, err := stateStore.GetNode(ctx, "node-1")
+	if err != nil {
+		t.Fatalf("GetNode() error = %v", err)
 	}
-
-	// Deregister node.
-	if err := stateStore.DeregisterNode(ctx, "node-1"); err != nil {
-		t.Fatalf("DeregisterNode() error = %v", err)
-	}
-
-	// Deregister again should fail.
-	err = stateStore.DeregisterNode(ctx, "node-1")
-	if err == nil {
-		t.Error("DeregisterNode() duplicate should return error")
+	if got.ID != "node-1" {
+		t.Errorf("GetNode() ID = %q, want %q", got.ID, "node-1")
 	}
 }
 

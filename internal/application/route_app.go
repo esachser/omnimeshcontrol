@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
+	"github.com/esachser/omnimeshcontrol/internal/domain/service"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 )
@@ -16,6 +17,7 @@ type RouteAppService struct {
 	state       outbound.StateStore
 	distributor outbound.ScopeDistributor
 	targets     inbound.TargetManager
+	tracker     service.NodeTracker // optional; used to look up the node's current lease
 	logger      *slog.Logger
 }
 
@@ -37,13 +39,26 @@ func (s *RouteAppService) SetScopeDistributor(d outbound.ScopeDistributor) {
 	s.distributor = d
 }
 
+// SetNodeTracker sets the node tracker so route keys are attached to the node's
+// etcd lease and are automatically removed when the node disconnects.
+func (s *RouteAppService) SetNodeTracker(t service.NodeTracker) {
+	s.tracker = t
+}
+
 // Apply creates or updates a target route.
+// If a NodeTracker is configured, the route key is attached to the node's
+// current etcd lease so it is automatically removed when the node disconnects.
 func (s *RouteAppService) Apply(ctx context.Context, route *model.TargetRoute) error {
 	if route.Name == "" || route.Namespace == "" || route.NodeID == "" || route.TargetService == "" {
 		return fmt.Errorf("route apply: name, namespace, nodeID and targetService are required")
 	}
 
-	if err := s.state.PersistTargetRoute(ctx, route); err != nil {
+	var leaseID int64
+	if s.tracker != nil {
+		leaseID = s.tracker.LeaseID(route.NodeID)
+	}
+
+	if err := s.state.PersistTargetRoute(ctx, route, leaseID); err != nil {
 		return fmt.Errorf("route apply: %w", err)
 	}
 
@@ -85,9 +100,11 @@ func (s *RouteAppService) Delete(ctx context.Context, namespace, name, serviceNa
 	return nil
 }
 
-// DeleteByNodeId removes all target routes for a given node id.
+// DeleteByNodeId broadcasts removal of all routes for a node.
+// The actual etcd key deletion is handled automatically by lease revocation;
+// this method only fetches and broadcasts removal events.
 func (s *RouteAppService) DeleteByNodeId(ctx context.Context, nodeId string) error {
-	// Fetch the routes first so we can broadcast their removal.
+	// Fetch the routes so we can broadcast their removal.
 	nodeRoutes, listErr := s.state.ListTargetRoutesByNode(ctx, nodeId)
 	var routesToDelete []model.TargetRoute
 	if listErr == nil {
@@ -96,12 +113,7 @@ func (s *RouteAppService) DeleteByNodeId(ctx context.Context, nodeId string) err
 		}
 	}
 
-	err := s.state.DeleteTargetRoutesByNode(ctx, nodeId)
-	if err != nil {
-		return fmt.Errorf("route delete by node id: %w", err)
-	}
-
-	s.logger.Info("target route deleted", "nodeId", nodeId)
+	s.logger.Info("target routes cleared for node", "nodeId", nodeId)
 
 	for _, route := range routesToDelete {
 		s.broadcastUpdate(ctx, route, model.ScopeUpdateRemove)

@@ -44,8 +44,6 @@ func run(logger *slog.Logger) error {
 	grpcAddr := envOrDefault("OMNIMESH_GRPC_ADDR", ":9090")
 	meshCIDR := envOrDefault("OMNIMESH_MESH_CIDR", "100.64.0.0/10")
 	dnsZone := envOrDefault("OMNIMESH_DNS_ZONE", "omnimesh.local")
-	gracePeriod := 30 * time.Second
-
 	// --- Start embedded etcd ---
 	logger.Info("starting embedded etcd", "dataDir", dataDir)
 	etcdCfg := etcdstore.EtcdConfig{
@@ -95,13 +93,14 @@ func run(logger *slog.Logger) error {
 		Logger:     logger,
 	})
 
-	// NodeLivenessTracker with callback to mark nodes as lost.
-	nodeTracker := etcdstore.NewNodeLivenessTracker(gracePeriod, logger)
-	// nodeTracker.RegisterCallback(func(ctx context.Context, nodeID string) {
-	// 	if err := stateStore.MarkNodeLost(ctx, nodeID); err != nil {
-	// 		logger.Warn("failed to mark node as lost", "nodeID", nodeID, "error", err)
-	// 	}
-	// })
+	// NodeLivenessTracker backed by etcd leases — liveness, node state, and route
+	// keys are all attached to the same lease so etcd cleans them up atomically
+	// when the lease expires (grace period) or is revoked (graceful disconnect).
+	nodeTracker, err := etcdstore.NewNodeLivenessTracker(embedded.Client(), 30, logger)
+	if err != nil {
+		return fmt.Errorf("create node tracker: %w", err)
+	}
+	defer nodeTracker.Close()
 
 	targetApp := application.NewTargetAppService(resourceStore, logger)
 
@@ -135,6 +134,8 @@ func run(logger *slog.Logger) error {
 	agentServer := grpcadapter.NewAgentServer(nodeApp, healthApp, scopeApp, routeApp, logger)
 
 	routeApp.SetScopeDistributor(agentServer)
+	routeApp.SetNodeTracker(nodeTracker)
+	routeDistributor.SetScopeDistributor(agentServer)
 
 	policyUpdates := application.NewTrafficPolicyUpdateService(policyStore, agentServer, logger.WithGroup("policy_updates"))
 	go func() {

@@ -14,7 +14,7 @@ import (
 
 // NodeAppService implements the NodeRegistrar inbound port.
 // It coordinates node registration with persistent storage (StateStore)
-// and in-memory liveness tracking (NodeLivenessTracker).
+// and distributed liveness tracking (NodeLivenessTracker via etcd lease).
 type NodeAppService struct {
 	state        outbound.StateStore
 	tracker      service.NodeTracker
@@ -33,10 +33,10 @@ func NewNodeAppService(state outbound.StateStore, tracker service.NodeTracker, r
 		routeManager: routeManager,
 		logger:       logger,
 	}
+	// When a node's lease expires or is revoked, notify app logic (logging, etc.).
+	// Etcd already handles cleanup of node state and route keys automatically.
 	tracker.RegisterCallback(func(ctx context.Context, nodeID string) {
-		if err := nap.DeregisterNode(ctx, nodeID); err != nil {
-			logger.Warn("failed to deregister node", "nodeID", nodeID, "error", err)
-		}
+		nap.logger.Warn("node lost (lease expired or revoked)", "nodeID", nodeID)
 	})
 	return nap
 }
@@ -49,11 +49,17 @@ func (s *NodeAppService) RegisterNode(ctx context.Context, node *model.Node) err
 
 	node.Status = model.NodeStatusActive
 
-	if err := s.state.PersistNode(ctx, node.ID, node); err != nil {
+	// Grant the etcd lease first — the returned LeaseID is attached to the
+	// node state key (and later to route keys) so they are cleaned up automatically.
+	leaseID, err := s.tracker.TrackNode(node.ID)
+	if err != nil {
 		return fmt.Errorf("node register: %w", err)
 	}
 
-	s.tracker.TrackNode(node.ID)
+	if err := s.state.PersistNode(ctx, node.ID, node, leaseID); err != nil {
+		s.tracker.UntrackNode(node.ID) // revoke lease on failure
+		return fmt.Errorf("node register: %w", err)
+	}
 
 	s.logger.Info("node registered",
 		"nodeID", node.ID,
@@ -63,17 +69,11 @@ func (s *NodeAppService) RegisterNode(ctx context.Context, node *model.Node) err
 	return nil
 }
 
-// DeregisterNode gracefully deregisters a node.
+// DeregisterNode gracefully deregisters a node by revoking its etcd lease.
+// Revoking the lease causes etcd to atomically delete the node state key,
+// all route keys, and the liveness key across every CP replica.
 func (s *NodeAppService) DeregisterNode(ctx context.Context, nodeID string) error {
-	s.tracker.UntrackNode(nodeID)
-
-	if err := s.routeManager.DeleteByNodeId(ctx, nodeID); err != nil {
-		s.logger.Warn("failed to delete routes for node", "nodeID", nodeID, "error", err)
-	}
-
-	if err := s.state.DeregisterNode(ctx, nodeID); err != nil {
-		return fmt.Errorf("node deregister: %w", err)
-	}
+	s.tracker.UntrackNode(nodeID) // revokes lease → etcd deletes all attached keys
 
 	s.logger.Info("node deregistered", "nodeID", nodeID)
 	return nil
@@ -82,13 +82,28 @@ func (s *NodeAppService) DeregisterNode(ctx context.Context, nodeID string) erro
 // OnStreamDisconnect handles an unexpected agent stream disconnection.
 func (s *NodeAppService) OnStreamDisconnect(_ context.Context, nodeID string) error {
 	s.tracker.OnDisconnect(nodeID)
-	s.logger.Info("node stream disconnected, grace period started", "nodeID", nodeID)
+	s.logger.Info("node stream disconnected, lease TTL counting down", "nodeID", nodeID)
 	return nil
 }
 
-// OnStreamReconnect handles an agent reconnecting within the grace period.
-func (s *NodeAppService) OnStreamReconnect(_ context.Context, nodeID string) error {
-	s.tracker.TrackNode(nodeID)
+// OnStreamReconnect handles an agent reconnecting.
+// Grants a fresh lease, re-attaches the node state key to it.
+func (s *NodeAppService) OnStreamReconnect(ctx context.Context, nodeID string) error {
+	leaseID, err := s.tracker.TrackNode(nodeID)
+	if err != nil {
+		return fmt.Errorf("node reconnect: %w", err)
+	}
+
+	// Re-persist node state attached to the new lease.
+	node, err := s.state.GetNode(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("node reconnect: get node: %w", err)
+	}
+	node.Status = model.NodeStatusActive
+	if err := s.state.PersistNode(ctx, nodeID, node, leaseID); err != nil {
+		return fmt.Errorf("node reconnect: persist: %w", err)
+	}
+
 	s.logger.Info("node stream reconnected", "nodeID", nodeID)
 	return nil
 }
@@ -120,7 +135,9 @@ func (s *NodeAppService) UpdateNodeServices(ctx context.Context, nodeID string, 
 		node.Services = append(node.Services, svc)
 	}
 
-	if err := s.state.PersistNode(ctx, node.ID, node); err != nil {
+	// Re-persist with the existing lease so the key stays attached.
+	leaseID := s.tracker.LeaseID(nodeID)
+	if err := s.state.PersistNode(ctx, node.ID, node, leaseID); err != nil {
 		return fmt.Errorf("update node services: %w", err)
 	}
 

@@ -159,31 +159,10 @@ func (m *mockStateStore) GetNode(_ context.Context, nodeID string) (*model.Node,
 	return node, nil
 }
 
-func (m *mockStateStore) PersistNode(_ context.Context, nodeID string, node *model.Node) error {
+func (m *mockStateStore) PersistNode(_ context.Context, nodeID string, node *model.Node, _ int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.nodes[nodeID] = node
-	return nil
-}
-
-func (m *mockStateStore) MarkNodeLost(_ context.Context, nodeID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n, ok := m.nodes[nodeID]
-	if !ok {
-		return domain.ErrNodeNotFound
-	}
-	n.Status = model.NodeStatusLost
-	return nil
-}
-
-func (m *mockStateStore) DeregisterNode(_ context.Context, nodeID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.nodes[nodeID]; !ok {
-		return domain.ErrNodeNotFound
-	}
-	delete(m.nodes, nodeID)
 	return nil
 }
 
@@ -191,7 +170,7 @@ func (m *mockStateStore) formatMockRouteKey(namespace, nodeID, serviceName, name
 	return nodeID + "/" + namespace + "/" + serviceName + "/" + name
 }
 
-func (m *mockStateStore) PersistTargetRoute(_ context.Context, route *model.TargetRoute) error {
+func (m *mockStateStore) PersistTargetRoute(_ context.Context, route *model.TargetRoute, _ int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := m.formatMockRouteKey(route.Namespace, route.NodeID, route.TargetService, route.Name)
@@ -244,16 +223,6 @@ func (m *mockStateStore) ListTargetRoutesByNode(_ context.Context, nodeID string
 	return out, nil
 }
 
-func (m *mockStateStore) DeleteTargetRoutesByNode(_ context.Context, nodeID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for k, rt := range m.routes {
-		if rt.NodeID == nodeID {
-			delete(m.routes, k)
-		}
-	}
-	return nil
-}
 
 func (m *mockStateStore) ClearTargetRoutes(_ context.Context) error {
 	m.mu.Lock()
@@ -369,10 +338,11 @@ func newMockNodeTracker() *mockNodeTracker {
 	return &mockNodeTracker{nodes: make(map[string]bool)}
 }
 
-func (m *mockNodeTracker) TrackNode(nodeID string) {
+func (m *mockNodeTracker) TrackNode(nodeID string) (service.LeaseID, error) {
 	m.mu.Lock()
 	m.nodes[nodeID] = true
 	m.mu.Unlock()
+	return 0, nil // mock returns 0 lease ID
 }
 func (m *mockNodeTracker) OnDisconnect(nodeID string) {
 	m.mu.Lock()
@@ -388,6 +358,18 @@ func (m *mockNodeTracker) IsAlive(nodeID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.nodes[nodeID]
+}
+func (m *mockNodeTracker) LeaseID(_ string) service.LeaseID { return 0 }
+func (m *mockNodeTracker) ConnectedNodes() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []string
+	for id, alive := range m.nodes {
+		if alive {
+			result = append(result, id)
+		}
+	}
+	return result
 }
 func (m *mockNodeTracker) RegisterCallback(callback service.NodeLivenessCallback) {
 	m.mu.Lock()

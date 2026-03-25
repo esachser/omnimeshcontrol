@@ -370,48 +370,21 @@ func (s *EtcdStateStore) GetNode(ctx context.Context, nodeID string) (*model.Nod
 	return &node, nil
 }
 
-// PersistNode persists a node's state to etcd.
-func (s *EtcdStateStore) PersistNode(ctx context.Context, nodeID string, node *model.Node) error {
+// PersistNode persists a node's state to etcd, attaching the key to the
+// provided etcd lease. When the lease expires or is revoked the key is
+// automatically removed by etcd.
+func (s *EtcdStateStore) PersistNode(ctx context.Context, nodeID string, node *model.Node, leaseID int64) error {
 	data, err := json.Marshal(node)
 	if err != nil {
 		return fmt.Errorf("state store: marshal node %q: %w", nodeID, err)
 	}
 	key := nodePrefix + nodeID
-	if _, err := s.client.Put(ctx, key, string(data)); err != nil {
+	opts := []clientv3.OpOption{}
+	if leaseID != 0 {
+		opts = append(opts, clientv3.WithLease(clientv3.LeaseID(leaseID)))
+	}
+	if _, err := s.client.Put(ctx, key, string(data), opts...); err != nil {
 		return fmt.Errorf("state store: persist node %q: %w", nodeID, err)
-	}
-	return nil
-}
-
-// MarkNodeLost updates a node's persistent state to LOST.
-func (s *EtcdStateStore) MarkNodeLost(ctx context.Context, nodeID string) error {
-	key := nodePrefix + nodeID
-	resp, err := s.client.Get(ctx, key)
-	if err != nil {
-		return fmt.Errorf("state store: get node %q: %w", nodeID, err)
-	}
-	if len(resp.Kvs) == 0 {
-		return fmt.Errorf("state store: mark lost %q: %w", nodeID, domain.ErrNodeNotFound)
-	}
-
-	var node model.Node
-	if err := json.Unmarshal(resp.Kvs[0].Value, &node); err != nil {
-		return fmt.Errorf("state store: unmarshal node %q: %w", nodeID, err)
-	}
-
-	node.Status = model.NodeStatusLost
-	return s.PersistNode(ctx, nodeID, &node)
-}
-
-// DeregisterNode removes a node from persistent storage.
-func (s *EtcdStateStore) DeregisterNode(ctx context.Context, nodeID string) error {
-	key := nodePrefix + nodeID
-	resp, err := s.client.Delete(ctx, key)
-	if err != nil {
-		return fmt.Errorf("state store: deregister node %q: %w", nodeID, err)
-	}
-	if resp.Deleted == 0 {
-		return fmt.Errorf("state store: deregister node %q: %w", nodeID, domain.ErrNodeNotFound)
 	}
 	return nil
 }
@@ -452,14 +425,19 @@ func (s *EtcdStateStore) LeaderAddr() string {
 	return string(resp.Kvs[0].Value)
 }
 
-// PersistTargetRoute persists a target route reported by a node.
-func (s *EtcdStateStore) PersistTargetRoute(ctx context.Context, route *model.TargetRoute) error {
+// PersistTargetRoute persists a target route reported by a node, attaching the
+// key to the node's etcd lease so it is removed automatically on disconnect.
+func (s *EtcdStateStore) PersistTargetRoute(ctx context.Context, route *model.TargetRoute, leaseID int64) error {
 	data, err := json.Marshal(route)
 	if err != nil {
 		return fmt.Errorf("state store: marshal target route: %w", err)
 	}
 	key := formatTargetRouteKey(route.Namespace, route.NodeID, route.TargetService, route.Name)
-	if _, err := s.client.Put(ctx, key, string(data)); err != nil {
+	opts := []clientv3.OpOption{}
+	if leaseID != 0 {
+		opts = append(opts, clientv3.WithLease(clientv3.LeaseID(leaseID)))
+	}
+	if _, err := s.client.Put(ctx, key, string(data), opts...); err != nil {
 		return fmt.Errorf("state store: persist target route %q: %w", key, err)
 	}
 	return nil
@@ -528,15 +506,6 @@ func (s *EtcdStateStore) ListTargetRoutesByNode(ctx context.Context, nodeID stri
 		}
 	}
 	return routes, nil
-}
-
-// DeleteTargetRoutesByNode removes all target routes associated with a specific node.
-func (s *EtcdStateStore) DeleteTargetRoutesByNode(ctx context.Context, nodeID string) error {
-	prefix := routePrefix + nodeID + "/"
-	if _, err := s.client.Delete(ctx, prefix, clientv3.WithPrefix()); err != nil {
-		return fmt.Errorf("state store: delete target routes by node %q: %w", nodeID, err)
-	}
-	return nil
 }
 
 // ClearTargetRoutes removes all target routes.

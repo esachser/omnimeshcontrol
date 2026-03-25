@@ -109,7 +109,7 @@ func TestEtcdRouteDistributor_SeedFromExistingEtcdData(t *testing.T) {
 		TargetService: "svc",
 		NodeID:        "node-z",
 	}
-	if err := stateStore.PersistTargetRoute(ctx, &pre); err != nil {
+	if err := stateStore.PersistTargetRoute(ctx, &pre, 0); err != nil {
 		t.Fatalf("pre-seed Put() error = %v", err)
 	}
 

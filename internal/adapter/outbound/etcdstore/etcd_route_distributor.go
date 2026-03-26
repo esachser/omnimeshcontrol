@@ -146,7 +146,21 @@ func (d *EtcdRouteDistributor) handleEvent(event outbound.TargetRouteStateEvent)
 		if event.Route != nil {
 			d.routes[event.Key] = *event.Route
 		}
+		dist := d.distributor
 		d.mu.Unlock()
+
+		updated := *event.Route
+		update := model.ScopeUpdate{
+			Type:   model.ScopeUpdateAdd,
+			Routes: []model.TargetRoute{updated},
+		}
+		if err := dist.BroadcastUpdate(context.Background(), update); err != nil {
+			d.logger.Warn("route distributor: broadcast add failed",
+				"route", updated.Name,
+				"nodeID", updated.NodeID,
+				"error", err,
+			)
+		}
 
 	case outbound.StateEventDelete:
 		// Capture the route before removing it so we can broadcast.

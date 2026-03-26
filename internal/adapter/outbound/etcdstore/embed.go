@@ -21,11 +21,15 @@ type EtcdConfig struct {
 	ListenClientURL string
 	// ListenPeerURL is the URL for peer connections (e.g., "http://localhost:2380").
 	ListenPeerURL string
-	// ClusterName is the human-readable name of this etcd node.
-	ClusterName string
+	// NodeName is the human-readable name of this etcd node.
+	NodeName string
 	// InitialCluster is the initial cluster configuration (e.g., "node1=http://localhost:2380").
 	// Leave empty for single-node.
 	InitialCluster string
+	// InitialClusterToken is the token used to identify the cluster.
+	InitialClusterToken string
+	// NewCluster indicates that the etcd cluster should be created as a new cluster.
+	NewCluster bool
 }
 
 // DefaultEtcdConfig returns a default configuration for single-node development.
@@ -34,7 +38,8 @@ func DefaultEtcdConfig(dataDir string) EtcdConfig {
 		DataDir:         dataDir,
 		ListenClientURL: "http://localhost:2379",
 		ListenPeerURL:   "http://localhost:2380",
-		ClusterName:     "omnimesh-default",
+		NodeName:        "omnimesh-default",
+		NewCluster:      true,
 	}
 }
 
@@ -48,7 +53,8 @@ type EmbeddedEtcd struct {
 func StartEmbeddedEtcd(cfg EtcdConfig) (*EmbeddedEtcd, error) {
 	etcdCfg := embed.NewConfig()
 	etcdCfg.Dir = cfg.DataDir
-	etcdCfg.Name = cfg.ClusterName
+	etcdCfg.Name = cfg.NodeName
+	etcdCfg.InitialClusterToken = cfg.InitialClusterToken
 
 	clientURL, err := url.Parse(cfg.ListenClientURL)
 	if err != nil {
@@ -67,9 +73,13 @@ func StartEmbeddedEtcd(cfg EtcdConfig) (*EmbeddedEtcd, error) {
 	if cfg.InitialCluster != "" {
 		etcdCfg.InitialCluster = cfg.InitialCluster
 	} else {
-		etcdCfg.InitialCluster = cfg.ClusterName + "=" + cfg.ListenPeerURL
+		etcdCfg.InitialCluster = cfg.NodeName + "=" + cfg.ListenPeerURL
 	}
-	etcdCfg.ClusterState = embed.ClusterStateFlagNew
+	if cfg.NewCluster {
+		etcdCfg.ClusterState = embed.ClusterStateFlagNew
+	} else {
+		etcdCfg.ClusterState = embed.ClusterStateFlagExisting
+	}
 
 	// Suppress excessive etcd logging in embedded mode.
 	etcdCfg.LogLevel = "warn"

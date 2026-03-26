@@ -31,7 +31,7 @@ func testEmbedded(t *testing.T) (*EmbeddedEtcd, func()) {
 		DataDir:         dataDir,
 		ListenClientURL: fmt.Sprintf("http://localhost:%d", clientPort),
 		ListenPeerURL:   fmt.Sprintf("http://localhost:%d", peerPort),
-		ClusterName:     "test-node",
+		NodeName:        "test-node",
 	}
 
 	embedded, err := StartEmbeddedEtcd(cfg)

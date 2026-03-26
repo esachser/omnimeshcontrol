@@ -44,13 +44,20 @@ func run(logger *slog.Logger) error {
 	grpcAddr := envOrDefault("OMNIMESH_GRPC_ADDR", ":9090")
 	meshCIDR := envOrDefault("OMNIMESH_MESH_CIDR", "100.64.0.0/10")
 	dnsZone := envOrDefault("OMNIMESH_DNS_ZONE", "omnimesh.local")
+	initialCluster := envOrDefault("OMNIMESH_ETCD_INITIAL_CLUSTER", "omnimesh-default=http://localhost:2380")
+	initialClusterToken := envOrDefault("OMNIMESH_ETCD_INITIAL_CLUSTER_TOKEN", "omnimesh-default")
+	nodeName := envOrDefault("OMNIMESH_ETCD_NODE_NAME", "omnimesh-default")
+	newCluster := envOrDefault("OMNIMESH_ETCD_NEW_CLUSTER", "true")
 	// --- Start embedded etcd ---
 	logger.Info("starting embedded etcd", "dataDir", dataDir)
 	etcdCfg := etcdstore.EtcdConfig{
-		DataDir:         dataDir,
-		ListenClientURL: clientURL,
-		ListenPeerURL:   peerURL,
-		ClusterName:     "omnimesh-default",
+		DataDir:             dataDir,
+		ListenClientURL:     clientURL,
+		ListenPeerURL:       peerURL,
+		InitialCluster:      initialCluster,
+		NodeName:            nodeName,
+		InitialClusterToken: initialClusterToken,
+		NewCluster:          newCluster == "true",
 	}
 	embedded, err := etcdstore.StartEmbeddedEtcd(etcdCfg)
 	if err != nil {

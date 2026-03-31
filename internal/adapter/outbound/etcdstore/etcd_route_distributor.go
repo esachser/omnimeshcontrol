@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
+	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 )
 
@@ -22,6 +23,7 @@ type EtcdRouteDistributor struct {
 	stateStore  outbound.StateStore
 	distributor outbound.ScopeDistributor // set via SetScopeDistributor; may be nil
 	logger      *slog.Logger
+	targets     inbound.TargetManager
 
 	mu     sync.RWMutex
 	routes map[string]model.TargetRoute // keyed by full etcd key
@@ -29,12 +31,13 @@ type EtcdRouteDistributor struct {
 
 // NewEtcdRouteDistributor creates a new EtcdRouteDistributor.
 // Call Run(ctx) in a goroutine to seed and watch for changes.
-func NewEtcdRouteDistributor(stateStore outbound.StateStore, logger *slog.Logger) *EtcdRouteDistributor {
+func NewEtcdRouteDistributor(stateStore outbound.StateStore, targets inbound.TargetManager, logger *slog.Logger) *EtcdRouteDistributor {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &EtcdRouteDistributor{
 		stateStore: stateStore,
+		targets:    targets,
 		logger:     logger,
 		routes:     make(map[string]model.TargetRoute),
 	}
@@ -150,6 +153,19 @@ func (d *EtcdRouteDistributor) handleEvent(event outbound.TargetRouteStateEvent)
 		d.mu.Unlock()
 
 		updated := *event.Route
+		if updated.Address == "" {
+			destNode, err := d.stateStore.GetNode(context.Background(), updated.NodeID)
+			if err == nil && destNode != nil {
+				updated.Address = destNode.Addr
+				updated.Target = destNode.Target
+				if destNode.Target != "" {
+					netTarget, tErr := d.targets.Get(context.Background(), destNode.Target)
+					if tErr == nil && netTarget != nil && netTarget.GatewayAddress != "" {
+						updated.TargetAddress = netTarget.GatewayAddress
+					}
+				}
+			}
+		}
 		update := model.ScopeUpdate{
 			Type:   model.ScopeUpdateAdd,
 			Routes: []model.TargetRoute{updated},

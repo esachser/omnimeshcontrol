@@ -2,18 +2,49 @@ package etcdstore
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/esachser/omnimeshcontrol/internal/application"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 )
+
+// --- Mock ScopeDistributor ---
+
+type mockScopeDistributor struct {
+	mu         sync.Mutex
+	broadcasts []model.ScopeUpdate
+	pushes     map[string][]model.ScopeUpdate
+}
+
+func newMockScopeDistributor() *mockScopeDistributor {
+	return &mockScopeDistributor{pushes: make(map[string][]model.ScopeUpdate)}
+}
+
+func (m *mockScopeDistributor) BroadcastUpdate(_ context.Context, update model.ScopeUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.broadcasts = append(m.broadcasts, update)
+	return nil
+}
+
+func (m *mockScopeDistributor) PushUpdate(_ context.Context, nodeID string, update model.ScopeUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pushes[nodeID] = append(m.pushes[nodeID], update)
+	return nil
+}
 
 func TestEtcdRouteDistributor_AnnounceAndAllRoutes(t *testing.T) {
 	embedded, cleanup := testEmbedded(t)
 	defer cleanup()
 
 	stateStore, _ := NewEtcdStateStore(embedded.Client())
-	dist := NewEtcdRouteDistributor(stateStore, nil)
+	resourceStore := NewEtcdResourceStore(embedded.Client())
+	targetApp := application.NewTargetAppService(resourceStore, nil)
+	dist := NewEtcdRouteDistributor(stateStore, targetApp, nil)
+	dist.SetScopeDistributor(newMockScopeDistributor())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -53,7 +84,10 @@ func TestEtcdRouteDistributor_WithdrawRoute(t *testing.T) {
 	defer cleanup()
 
 	stateStore, _ := NewEtcdStateStore(embedded.Client())
-	dist := NewEtcdRouteDistributor(stateStore, nil)
+	resourceStore := NewEtcdResourceStore(embedded.Client())
+	targetApp := application.NewTargetAppService(resourceStore, nil)
+	dist := NewEtcdRouteDistributor(stateStore, targetApp, nil)
+	dist.SetScopeDistributor(newMockScopeDistributor())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -113,13 +147,16 @@ func TestEtcdRouteDistributor_SeedFromExistingEtcdData(t *testing.T) {
 		t.Fatalf("pre-seed Put() error = %v", err)
 	}
 
-	dist := NewEtcdRouteDistributor(stateStore, nil)
+	resourceStore := NewEtcdResourceStore(embedded.Client())
+	targetApp := application.NewTargetAppService(resourceStore, nil)
+	dist := NewEtcdRouteDistributor(stateStore, targetApp, nil)
+	dist.SetScopeDistributor(newMockScopeDistributor())
 
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	// loadAll is synchronous before the watch loop begins.
-	go dist.Run(runCtx) //nolint:errcheck
+	go dist.Run(runCtx)                //nolint:errcheck
 	time.Sleep(200 * time.Millisecond) // give Run time to seed
 
 	all := dist.AllRoutes()

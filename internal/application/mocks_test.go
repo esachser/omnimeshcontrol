@@ -602,3 +602,29 @@ func (m *mockRouteManager) ClearRoutes(_ context.Context) error {
 	m.routes = make(map[string]*model.TargetRoute)
 	return nil
 }
+
+// --- Mock ScopeDistributor ---
+
+type mockScopeDistributor struct {
+	mu         sync.Mutex
+	broadcasts []model.ScopeUpdate
+	pushes     map[string][]model.ScopeUpdate
+}
+
+func newMockScopeDistributor() *mockScopeDistributor {
+	return &mockScopeDistributor{pushes: make(map[string][]model.ScopeUpdate)}
+}
+
+func (m *mockScopeDistributor) BroadcastUpdate(_ context.Context, update model.ScopeUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.broadcasts = append(m.broadcasts, update)
+	return nil
+}
+
+func (m *mockScopeDistributor) PushUpdate(_ context.Context, nodeID string, update model.ScopeUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pushes[nodeID] = append(m.pushes[nodeID], update)
+	return nil
+}

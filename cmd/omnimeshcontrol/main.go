@@ -75,8 +75,10 @@ func run(logger *slog.Logger) error {
 	}
 	defer stateStore.Close()
 
+	targetApp := application.NewTargetAppService(resourceStore, logger)
+
 	dnsManager := etcddns.NewEtcdDNSRecordManager(embedded.Client(), dnsZone)
-	routeDistributor := etcdstore.NewEtcdRouteDistributor(stateStore, logger.WithGroup("route_dist"))
+	routeDistributor := etcdstore.NewEtcdRouteDistributor(stateStore, targetApp, logger.WithGroup("route_dist"))
 	policyStore := etcdstore.NewEtcdTrafficPolicyStore(resourceStore)
 	healthStore := etcdstore.NewEtcdEndpointHealthStore(embedded.Client())
 	depStore := etcdstore.NewEtcdDependencyStore(embedded.Client())
@@ -108,8 +110,6 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("create node tracker: %w", err)
 	}
 	defer nodeTracker.Close()
-
-	targetApp := application.NewTargetAppService(resourceStore, logger)
 
 	routeApp := application.NewRouteAppService(resourceStore, stateStore, targetApp, logger)
 	nodeApp := application.NewNodeAppService(stateStore, nodeTracker, routeApp, logger)
@@ -148,6 +148,13 @@ func run(logger *slog.Logger) error {
 	go func() {
 		if err := policyUpdates.Run(ctx); err != nil {
 			logger.Warn("traffic policy updates stopped", "error", err)
+		}
+	}()
+
+	serviceUpdates := application.NewServiceUpdateService(resourceStore, stateStore, agentServer, logger.WithGroup("service_updates"))
+	go func() {
+		if err := serviceUpdates.Run(ctx); err != nil {
+			logger.Warn("service updates stopped", "error", err)
 		}
 	}()
 

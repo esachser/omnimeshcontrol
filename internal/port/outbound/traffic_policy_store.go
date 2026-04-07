@@ -50,7 +50,10 @@ type EndpointHealthEvent struct {
 
 // EndpointHealthStore persists and queries endpoint health status.
 type EndpointHealthStore interface {
-	PutEndpointHealth(ctx context.Context, health *model.EndpointHealth) error
+	// PutEndpointHealth persists an endpoint health report.
+	// leaseID must be the etcd lease ID for the node that reported this health so
+	// the key is automatically removed when the node's lease expires.
+	PutEndpointHealth(ctx context.Context, health *model.EndpointHealth, leaseID int64) error
 	GetEndpointHealth(ctx context.Context, serviceID model.ServiceID, addr string) (*model.EndpointHealth, error)
 	ListEndpointHealth(ctx context.Context, serviceID model.ServiceID) ([]*model.EndpointHealth, error)
 	WatchEndpointHealth(ctx context.Context) (<-chan EndpointHealthEvent, error)

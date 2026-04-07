@@ -24,7 +24,9 @@ func NewEtcdEndpointHealthStore(client *clientv3.Client) *EtcdEndpointHealthStor
 }
 
 // PutEndpointHealth persists an endpoint health report.
-func (s *EtcdEndpointHealthStore) PutEndpointHealth(ctx context.Context, health *model.EndpointHealth) error {
+// If leaseID is non-zero, the key is attached to the given etcd lease so it is
+// automatically removed when the lease expires (node disconnect cleanup).
+func (s *EtcdEndpointHealthStore) PutEndpointHealth(ctx context.Context, health *model.EndpointHealth, leaseID int64) error {
 	if health == nil {
 		return fmt.Errorf("endpoint health store: health is nil")
 	}
@@ -36,7 +38,11 @@ func (s *EtcdEndpointHealthStore) PutEndpointHealth(ctx context.Context, health 
 		return fmt.Errorf("endpoint health store: marshal: %w", err)
 	}
 	key := endpointHealthKey(health.ServiceID, health.Address)
-	if _, err := s.client.Put(ctx, key, string(data)); err != nil {
+	opts := []clientv3.OpOption{}
+	if leaseID != 0 {
+		opts = append(opts, clientv3.WithLease(clientv3.LeaseID(leaseID)))
+	}
+	if _, err := s.client.Put(ctx, key, string(data), opts...); err != nil {
 		return fmt.Errorf("endpoint health store: put %q: %w", key, err)
 	}
 	return nil

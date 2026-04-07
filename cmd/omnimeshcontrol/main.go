@@ -117,7 +117,7 @@ func run(logger *slog.Logger) error {
 	validator := domainservice.NewPolicyValidator()
 	policyApp := application.NewTrafficPolicyAppService(policyStore, resourceStore, validator, logger)
 
-	healthApp := application.NewHealthAppService(healthStore, stateStore, routeDistributor, logger)
+	healthApp := application.NewHealthAppService(healthStore, nodeTracker, logger)
 
 	scopeApp := application.NewAgentScopeAppService(
 		resourceStore,
@@ -155,6 +155,13 @@ func run(logger *slog.Logger) error {
 	go func() {
 		if err := serviceUpdates.Run(ctx); err != nil {
 			logger.Warn("service updates stopped", "error", err)
+		}
+	}()
+
+	healthUpdates := application.NewHealthUpdateService(healthStore, agentServer, logger.WithGroup("health_updates"))
+	go func() {
+		if err := healthUpdates.Run(ctx); err != nil {
+			logger.Warn("health updates stopped", "error", err)
 		}
 	}()
 

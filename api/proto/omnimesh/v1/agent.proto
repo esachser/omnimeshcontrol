@@ -85,6 +85,7 @@ message ScopeSnapshot {
   repeated RouteInfo routes = 2;
   repeated TrafficPolicyInfo traffic_policies = 3;
   repeated AuthzPolicyInfo authz_policies = 4;
+  repeated EndpointHealthInfo endpoint_health = 5;
 }
 
 message ScopeUpdate {
@@ -92,6 +93,7 @@ message ScopeUpdate {
   repeated ServiceInfo services = 2;
   repeated RouteInfo routes = 3;
   repeated TrafficPolicyInfo traffic_policies = 4;
+  repeated EndpointHealthInfo endpoint_health = 5;
 }
 
 enum ScopeUpdateType {
@@ -216,4 +218,19 @@ message SelectorInfo {
   string namespace = 1;
   string name = 2;
   map<string, string> labels = 3;
+}
+
+// EndpointHealthInfo carries health status for a specific service endpoint.
+// Fields are aligned with HealthReport (agent→CP) naming.
+// node_id allows agents to match health to the correct route target_node.
+message EndpointHealthInfo {
+  string namespace = 1;
+  string service_name = 2;
+  // endpoint_id is the host:port of the endpoint — matches HealthReport.endpoint_id.
+  string endpoint_id = 3;
+  EndpointHealthStatus status = 4;
+  // probe_type is the kind of health check used: "TCP", "HTTP", or "gRPC".
+  string probe_type = 5;
+  // node_id is the agent node that reported this health.
+  string node_id = 6;
 }

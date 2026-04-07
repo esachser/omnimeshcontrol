@@ -291,6 +291,10 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 		snapshot.TrafficPolicies = append(snapshot.TrafficPolicies, trafficPolicyToProto(policy))
 	}
 
+	for _, health := range scope.EndpointHealth {
+		snapshot.EndpointHealth = append(snapshot.EndpointHealth, endpointHealthToProto(health))
+	}
+
 	return snapshot
 }
 
@@ -364,6 +368,10 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 
 	for _, policy := range update.TrafficPolicies {
 		protoUpdate.TrafficPolicies = append(protoUpdate.TrafficPolicies, trafficPolicyToProto(policy))
+	}
+
+	for _, health := range update.EndpointHealth {
+		protoUpdate.EndpointHealth = append(protoUpdate.EndpointHealth, endpointHealthToProto(health))
 	}
 
 	return protoUpdate
@@ -472,6 +480,32 @@ func trafficRoutesToProto(routes []model.TrafficRoute) []*omnimeshv1.TrafficRout
 // Kept here for use in any future proto→model conversion.
 func durationFromMs(ms int64) time.Duration {
 	return time.Duration(ms) * time.Millisecond
+}
+
+// endpointHealthToProto converts a domain EndpointHealth to its proto representation.
+// Field names are aligned with HealthReport (the agent→CP direction).
+func endpointHealthToProto(h model.EndpointHealth) *omnimeshv1.EndpointHealthInfo {
+	return &omnimeshv1.EndpointHealthInfo{
+		Namespace:   h.ServiceID.Namespace,
+		ServiceName: h.ServiceID.Name,
+		EndpointId:  h.Address,
+		Status:      healthStatusToProto(h.Status),
+		ProbeType:   h.ProbeType.String(),
+		NodeId:      h.NodeID,
+	}
+}
+
+func healthStatusToProto(s model.EndpointHealthStatus) omnimeshv1.EndpointHealthStatus {
+	switch s {
+	case model.EndpointHealthHealthy:
+		return omnimeshv1.EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_HEALTHY
+	case model.EndpointHealthUnhealthy:
+		return omnimeshv1.EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNHEALTHY
+	case model.EndpointHealthDraining:
+		return omnimeshv1.EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_DRAINING
+	default:
+		return omnimeshv1.EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNSPECIFIED
+	}
 }
 
 // BroadcastUpdate pushes a differential scope update to all active agents.

@@ -453,7 +453,7 @@ func newMockEndpointHealthStore() *mockEndpointHealthStore {
 	return &mockEndpointHealthStore{health: make(map[string]*model.EndpointHealth)}
 }
 
-func (m *mockEndpointHealthStore) PutEndpointHealth(_ context.Context, health *model.EndpointHealth) error {
+func (m *mockEndpointHealthStore) PutEndpointHealth(_ context.Context, health *model.EndpointHealth, _ int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := fmt.Sprintf("%s/%s", health.ServiceID, health.Address)

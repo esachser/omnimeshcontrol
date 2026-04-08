@@ -31,8 +31,8 @@ func (t HealthProbeType) String() string {
 type EndpointHealth struct {
 	// ServiceID identifies the service this health report is for.
 	ServiceID ServiceID
-	// Address is the host:port of the endpoint.
-	Address string
+	// RouteName is the route name of the endpoint.
+	RouteName string
 	// Status is the current health status.
 	Status EndpointHealthStatus
 	// LastCheck is when the last health check was performed.

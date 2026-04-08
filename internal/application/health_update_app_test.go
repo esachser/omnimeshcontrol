@@ -17,7 +17,7 @@ func TestHealthUpdateService_BroadcastsOnPutEvent(t *testing.T) {
 	// Create a health store mock that supports a controllable watch channel.
 	watchableStore := &watchableMockHealthStore{
 		mockEndpointHealthStore: *newMockEndpointHealthStore(),
-		eventCh:                make(chan outbound.EndpointHealthEvent, 10),
+		eventCh:                 make(chan outbound.EndpointHealthEvent, 10),
 	}
 
 	svc := NewHealthUpdateService(watchableStore, distributor, logger)
@@ -34,7 +34,7 @@ func TestHealthUpdateService_BroadcastsOnPutEvent(t *testing.T) {
 	// Send a health put event.
 	health := &model.EndpointHealth{
 		ServiceID: model.ServiceID{Namespace: "prod", Name: "api"},
-		Address:   "10.0.1.5:8080",
+		RouteName: "edp1",
 		Status:    model.EndpointHealthUnhealthy,
 		NodeID:    "node-1",
 	}
@@ -75,7 +75,7 @@ func TestHealthUpdateService_BroadcastsOnDeleteEvent(t *testing.T) {
 
 	watchableStore := &watchableMockHealthStore{
 		mockEndpointHealthStore: *newMockEndpointHealthStore(),
-		eventCh:                make(chan outbound.EndpointHealthEvent, 10),
+		eventCh:                 make(chan outbound.EndpointHealthEvent, 10),
 	}
 
 	svc := NewHealthUpdateService(watchableStore, distributor, logger)
@@ -91,7 +91,7 @@ func TestHealthUpdateService_BroadcastsOnDeleteEvent(t *testing.T) {
 	// Send a delete event.
 	health := &model.EndpointHealth{
 		ServiceID: model.ServiceID{Namespace: "prod", Name: "api"},
-		Address:   "10.0.1.5:8080",
+		RouteName: "edp1",
 		Status:    model.EndpointHealthUnhealthy,
 		NodeID:    "node-1",
 	}
@@ -122,7 +122,7 @@ func TestHealthUpdateService_StopsOnContextCancel(t *testing.T) {
 
 	watchableStore := &watchableMockHealthStore{
 		mockEndpointHealthStore: *newMockEndpointHealthStore(),
-		eventCh:                make(chan outbound.EndpointHealthEvent, 10),
+		eventCh:                 make(chan outbound.EndpointHealthEvent, 10),
 	}
 
 	svc := NewHealthUpdateService(watchableStore, distributor, logger)

@@ -30,7 +30,7 @@ type ServiceHealthReporter interface {
 	// DrainService initiates graceful termination for a service endpoint.
 	// The control plane withdraws the endpoint from all agents' routes,
 	// preventing new connections while allowing existing ones to complete.
-	DrainService(ctx context.Context, serviceID model.ServiceID, endpointAddr string) error
+	DrainService(ctx context.Context, serviceID model.ServiceID, routeName string) error
 }
 
 // AgentScopeManager defines the inbound use cases for managing agent scopes.

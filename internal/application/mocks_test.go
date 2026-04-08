@@ -223,7 +223,6 @@ func (m *mockStateStore) ListTargetRoutesByNode(_ context.Context, nodeID string
 	return out, nil
 }
 
-
 func (m *mockStateStore) ClearTargetRoutes(_ context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -456,7 +455,7 @@ func newMockEndpointHealthStore() *mockEndpointHealthStore {
 func (m *mockEndpointHealthStore) PutEndpointHealth(_ context.Context, health *model.EndpointHealth, _ int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := fmt.Sprintf("%s/%s", health.ServiceID, health.Address)
+	key := fmt.Sprintf("%s/%s", health.ServiceID, health.RouteName)
 	m.health[key] = health
 	return nil
 }

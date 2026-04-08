@@ -87,7 +87,7 @@ func (s *HealthUpdateService) handleEvent(ctx context.Context, event outbound.En
 	if err := s.distributor.BroadcastUpdate(ctx, update); err != nil {
 		s.logger.Warn("health update: broadcast failed",
 			"service", event.Health.ServiceID,
-			"address", event.Health.Address,
+			"route_name", event.Health.RouteName,
 			"error", err,
 		)
 	}

@@ -63,7 +63,7 @@ func (s *HealthAppService) ReportEndpointHealth(ctx context.Context, report *mod
 
 	s.logger.Debug("endpoint health reported",
 		"service", report.ServiceID,
-		"address", report.Address,
+		"route_name", report.RouteName,
 		"status", report.Status,
 		"nodeID", report.NodeID,
 	)
@@ -73,10 +73,10 @@ func (s *HealthAppService) ReportEndpointHealth(ctx context.Context, report *mod
 // DrainService initiates graceful termination for a service endpoint.
 // Sets the endpoint to DRAINING. Agents are notified via HealthUpdateService
 // watching the etcd write.
-func (s *HealthAppService) DrainService(ctx context.Context, serviceID model.ServiceID, endpointAddr string) error {
+func (s *HealthAppService) DrainService(ctx context.Context, serviceID model.ServiceID, routeName string) error {
 	drainReport := &model.EndpointHealth{
 		ServiceID: serviceID,
-		Address:   endpointAddr,
+		RouteName: routeName,
 		Status:    model.EndpointHealthDraining,
 	}
 
@@ -88,7 +88,7 @@ func (s *HealthAppService) DrainService(ctx context.Context, serviceID model.Ser
 
 	s.logger.Info("service endpoint draining",
 		"service", serviceID,
-		"address", endpointAddr,
+		"route_name", routeName,
 	)
 	return nil
 }

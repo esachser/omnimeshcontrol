@@ -37,7 +37,7 @@ func (s *EtcdEndpointHealthStore) PutEndpointHealth(ctx context.Context, health 
 	if err != nil {
 		return fmt.Errorf("endpoint health store: marshal: %w", err)
 	}
-	key := endpointHealthKey(health.ServiceID, health.Address)
+	key := endpointHealthKey(health.ServiceID, health.RouteName)
 	opts := []clientv3.OpOption{}
 	if leaseID != 0 {
 		opts = append(opts, clientv3.WithLease(clientv3.LeaseID(leaseID)))

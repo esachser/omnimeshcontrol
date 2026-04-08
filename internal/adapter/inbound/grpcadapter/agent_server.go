@@ -132,8 +132,6 @@ messagereceiver:
 		switch payload := msg.Payload.(type) {
 		case *omnimeshv1.AgentStreamRequest_HealthReport:
 			s.handleHealthReport(ctx, payload.HealthReport, nodeID)
-		case *omnimeshv1.AgentStreamRequest_DrainRequest:
-			s.handleDrainRequest(ctx, payload.DrainRequest)
 		case *omnimeshv1.AgentStreamRequest_UpdateNodeServices:
 			s.handleUpdateNodeServices(ctx, payload.UpdateNodeServices, nodeID)
 		case *omnimeshv1.AgentStreamRequest_DrainNode:
@@ -152,20 +150,13 @@ func (s *AgentServer) handleHealthReport(ctx context.Context, report *omnimeshv1
 			Namespace: report.Namespace,
 			Name:      report.ServiceName,
 		},
-		Address:   report.EndpointId,
+		RouteName: report.RouteName,
 		Status:    healthStatusFromProto(report.Status),
 		ProbeType: probeTypeFromString(report.ProbeType),
 		NodeID:    nodeID,
 	}
 	if err := s.healthReporter.ReportEndpointHealth(ctx, health); err != nil {
 		s.logger.Warn("failed to process health report", "nodeID", nodeID, "error", err)
-	}
-}
-
-func (s *AgentServer) handleDrainRequest(ctx context.Context, drain *omnimeshv1.DrainRequest) {
-	svcID := model.ServiceID{Namespace: drain.ServiceNamespace, Name: drain.ServiceName}
-	if err := s.healthReporter.DrainService(ctx, svcID, drain.EndpointAddress); err != nil {
-		s.logger.Warn("failed to process drain request", "service", svcID, "error", err)
 	}
 }
 
@@ -488,7 +479,7 @@ func endpointHealthToProto(h model.EndpointHealth) *omnimeshv1.EndpointHealthInf
 	return &omnimeshv1.EndpointHealthInfo{
 		Namespace:   h.ServiceID.Namespace,
 		ServiceName: h.ServiceID.Name,
-		EndpointId:  h.Address,
+		RouteName:   h.RouteName,
 		Status:      healthStatusToProto(h.Status),
 		ProbeType:   h.ProbeType.String(),
 		NodeId:      h.NodeID,

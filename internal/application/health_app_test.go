@@ -20,7 +20,7 @@ func TestReportEndpointHealth_PersistsWithLease(t *testing.T) {
 
 	report := &model.EndpointHealth{
 		ServiceID: model.ServiceID{Namespace: "prod", Name: "api"},
-		Address:   "10.0.1.5:8080",
+		RouteName: "edp1",
 		Status:    model.EndpointHealthUnhealthy,
 		ProbeType: model.HealthProbeTCP,
 		NodeID:    "node-1",
@@ -32,7 +32,7 @@ func TestReportEndpointHealth_PersistsWithLease(t *testing.T) {
 	}
 
 	// Verify health was persisted.
-	stored, err := healthStore.GetEndpointHealth(context.Background(), report.ServiceID, report.Address)
+	stored, err := healthStore.GetEndpointHealth(context.Background(), report.ServiceID, report.RouteName)
 	if err != nil {
 		t.Fatalf("health not found in store: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestReportEndpointHealth_NilTracker(t *testing.T) {
 
 	report := &model.EndpointHealth{
 		ServiceID: model.ServiceID{Namespace: "prod", Name: "api"},
-		Address:   "10.0.1.5:8080",
+		RouteName: "edp1",
 		Status:    model.EndpointHealthHealthy,
 		NodeID:    "node-1",
 	}
@@ -63,7 +63,7 @@ func TestReportEndpointHealth_NilTracker(t *testing.T) {
 		t.Fatalf("unexpected error with nil tracker: %v", err)
 	}
 
-	stored, err := healthStore.GetEndpointHealth(context.Background(), report.ServiceID, report.Address)
+	stored, err := healthStore.GetEndpointHealth(context.Background(), report.ServiceID, report.RouteName)
 	if err != nil {
 		t.Fatalf("health not found in store: %v", err)
 	}
@@ -80,15 +80,15 @@ func TestDrainService_SetsDrainingStatus(t *testing.T) {
 	svc := NewHealthAppService(healthStore, tracker, logger)
 
 	serviceID := model.ServiceID{Namespace: "prod", Name: "api"}
-	endpointAddr := "10.0.1.5:8080"
+	routeName := "edp1"
 
-	err := svc.DrainService(context.Background(), serviceID, endpointAddr)
+	err := svc.DrainService(context.Background(), serviceID, routeName)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Verify health was persisted as DRAINING.
-	stored, err := healthStore.GetEndpointHealth(context.Background(), serviceID, endpointAddr)
+	stored, err := healthStore.GetEndpointHealth(context.Background(), serviceID, routeName)
 	if err != nil {
 		t.Fatalf("health not found in store: %v", err)
 	}
@@ -111,9 +111,9 @@ func TestDrainService_NotLeaseAttached(t *testing.T) {
 	svc := NewHealthAppService(healthStore, tracker, logger)
 
 	serviceID := model.ServiceID{Namespace: "prod", Name: "api"}
-	_ = svc.DrainService(context.Background(), serviceID, "10.0.1.5:8080")
+	_ = svc.DrainService(context.Background(), serviceID, "edp1")
 
-	stored, _ := healthStore.GetEndpointHealth(context.Background(), serviceID, "10.0.1.5:8080")
+	stored, _ := healthStore.GetEndpointHealth(context.Background(), serviceID, "edp1")
 	if stored == nil {
 		t.Fatal("drain report not persisted")
 	}

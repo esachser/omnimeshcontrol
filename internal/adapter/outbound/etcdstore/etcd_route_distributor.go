@@ -11,6 +11,13 @@ import (
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 )
 
+// NodeDrainChecker reports whether a node is currently draining.
+// Used to suppress individual route-deletion broadcasts for draining nodes,
+// since agents already received a single drain broadcast.
+type NodeDrainChecker interface {
+	IsNodeDraining(nodeID string) bool
+}
+
 // EtcdRouteDistributor implements the RouteDistributor outbound port backed by etcd.
 //
 // It persists TargetRoute registrations using the shared StateStore,
@@ -20,10 +27,11 @@ import (
 //   - AllRoutes is always a fast, lock-free in-memory read.
 //   - DELETE events (including those from lease expiry) are broadcast to agents.
 type EtcdRouteDistributor struct {
-	stateStore  outbound.StateStore
-	distributor outbound.ScopeDistributor // set via SetScopeDistributor; may be nil
-	logger      *slog.Logger
-	targets     inbound.TargetManager
+	stateStore    outbound.StateStore
+	distributor   outbound.ScopeDistributor // set via SetScopeDistributor; may be nil
+	drainChecker  NodeDrainChecker          // set via SetNodeDrainChecker; may be nil
+	logger        *slog.Logger
+	targets       inbound.TargetManager
 
 	mu     sync.RWMutex
 	routes map[string]model.TargetRoute // keyed by full etcd key
@@ -50,6 +58,14 @@ func (d *EtcdRouteDistributor) SetScopeDistributor(dist outbound.ScopeDistributo
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.distributor = dist
+}
+
+// SetNodeDrainChecker sets the checker used to suppress route-deletion broadcasts
+// for draining nodes. Must be called before Run() to take effect.
+func (d *EtcdRouteDistributor) SetNodeDrainChecker(checker NodeDrainChecker) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.drainChecker = checker
 }
 
 // AnnounceRoute persists a TargetRoute to etcd.
@@ -183,7 +199,18 @@ func (d *EtcdRouteDistributor) handleEvent(event outbound.TargetRouteStateEvent)
 		deleted, had := d.routes[event.Key]
 		delete(d.routes, event.Key)
 		dist := d.distributor
+		checker := d.drainChecker
 		d.mu.Unlock()
+
+		// Suppress broadcast if the route belongs to a draining node —
+		// agents already received a single drain broadcast from NodeUpdateService.
+		if had && checker != nil && checker.IsNodeDraining(deleted.NodeID) {
+			d.logger.Debug("route distributor: suppressing delete broadcast for draining node",
+				"route", deleted.Name,
+				"nodeID", deleted.NodeID,
+			)
+			return
+		}
 
 		if had && dist != nil {
 			update := model.ScopeUpdate{

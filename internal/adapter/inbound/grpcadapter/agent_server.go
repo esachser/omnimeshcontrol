@@ -189,7 +189,7 @@ func (s *AgentServer) handleUpdateNodeServices(ctx context.Context, req *omnimes
 }
 
 func (s *AgentServer) handleDrainNode(ctx context.Context, drain *omnimeshv1.DrainNodeRequest, nodeID string) {
-	if err := s.nodeRegistrar.DeregisterNode(ctx, nodeID); err != nil {
+	if err := s.nodeRegistrar.DrainNode(ctx, nodeID); err != nil {
 		s.logger.Warn("failed to process drain node", "nodeID", nodeID, "error", err)
 	}
 }

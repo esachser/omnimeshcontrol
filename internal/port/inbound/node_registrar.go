@@ -25,4 +25,10 @@ type NodeRegistrar interface {
 	OnStreamReconnect(ctx context.Context, nodeID string) error
 	// UpdateNodeServices updates the services running on the node.
 	UpdateNodeServices(ctx context.Context, nodeID string, added []model.ServiceID, removed []model.ServiceID) error
+	// DrainNode initiates graceful node draining. Sets the node status to
+	// DRAINING and stops the keepalive so the lease TTL counts down (grace
+	// period). The NodeUpdateService watcher broadcasts a single route-removal
+	// event to all agents. When the lease expires, all attached keys (routes,
+	// health, liveness) are atomically deleted.
+	DrainNode(ctx context.Context, nodeID string) error
 }

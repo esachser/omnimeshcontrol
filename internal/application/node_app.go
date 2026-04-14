@@ -79,6 +79,35 @@ func (s *NodeAppService) DeregisterNode(ctx context.Context, nodeID string) erro
 	return nil
 }
 
+// DrainNode initiates graceful node draining.
+// Sets the node status to DRAINING and stops the keepalive so the lease TTL
+// counts down (grace period). The NodeUpdateService watcher detects the status
+// change and broadcasts a single route-removal event to all agents.
+func (s *NodeAppService) DrainNode(ctx context.Context, nodeID string) error {
+	node, err := s.state.GetNode(ctx, nodeID)
+	if err != nil {
+		return fmt.Errorf("drain node: %w", err)
+	}
+
+	node.Status = model.NodeStatusDraining
+
+	// Re-persist with the same lease — the key stays attached and will be
+	// cleaned up when the lease expires after the grace period.
+	leaseID := s.tracker.LeaseID(nodeID)
+	if err := s.state.PersistNode(ctx, nodeID, node, leaseID); err != nil {
+		return fmt.Errorf("drain node: persist: %w", err)
+	}
+
+	// Stop the keepalive — the lease TTL now counts down. This IS the grace
+	// period during which existing connections can complete.
+	s.tracker.OnDisconnect(nodeID)
+
+	s.logger.Info("node draining — lease TTL counting down",
+		"nodeID", nodeID,
+	)
+	return nil
+}
+
 // OnStreamDisconnect handles an unexpected agent stream disconnection.
 func (s *NodeAppService) OnStreamDisconnect(_ context.Context, nodeID string) error {
 	s.tracker.OnDisconnect(nodeID)

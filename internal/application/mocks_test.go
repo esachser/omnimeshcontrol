@@ -234,6 +234,12 @@ func (m *mockStateStore) WatchTargetRoutes(_ context.Context) (<-chan outbound.T
 	return nil, nil
 }
 
+func (m *mockStateStore) WatchNodes(_ context.Context) (<-chan outbound.NodeStateEvent, error) {
+	ch := make(chan outbound.NodeStateEvent)
+	close(ch)
+	return ch, nil
+}
+
 func (m *mockStateStore) IsLeader() bool                                         { return true }
 func (m *mockStateStore) WaitForLeader(_ context.Context, _ time.Duration) error { return nil }
 func (m *mockStateStore) LeaderAddr() string                                     { return "localhost:2379" }

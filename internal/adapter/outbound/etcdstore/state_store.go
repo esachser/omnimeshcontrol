@@ -560,6 +560,50 @@ func (s *EtcdStateStore) WatchTargetRoutes(ctx context.Context) (<-chan outbound
 	return eventCh, nil
 }
 
+// WatchNodes returns a channel of events for node state changes.
+func (s *EtcdStateStore) WatchNodes(ctx context.Context) (<-chan outbound.NodeStateEvent, error) {
+	watchCh := s.client.Watch(ctx, nodePrefix, clientv3.WithPrefix(), clientv3.WithPrevKV())
+	eventCh := make(chan outbound.NodeStateEvent, 64)
+
+	go func() {
+		defer close(eventCh)
+		for resp := range watchCh {
+			for _, ev := range resp.Events {
+				event := outbound.NodeStateEvent{
+					Key: string(ev.Kv.Key),
+				}
+				switch ev.Type {
+				case clientv3.EventTypePut:
+					event.Type = outbound.StateEventPut
+					var node model.Node
+					if err := json.Unmarshal(ev.Kv.Value, &node); err == nil {
+						event.Node = &node
+					}
+				case clientv3.EventTypeDelete:
+					event.Type = outbound.StateEventDelete
+					kv := ev.PrevKv
+					if kv == nil {
+						kv = ev.Kv
+					}
+					if kv != nil && len(kv.Value) > 0 {
+						var node model.Node
+						if err := json.Unmarshal(kv.Value, &node); err == nil {
+							event.Node = &node
+						}
+					}
+				}
+				select {
+				case eventCh <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return eventCh, nil
+}
+
 func formatTargetRouteKey(namespace, nodeID, serviceName, name string) string {
 	return routePrefix + nodeID + "/" + namespace + "/" + serviceName + "/" + name
 }

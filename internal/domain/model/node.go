@@ -6,6 +6,10 @@ type NodeStatus int
 const (
 	// NodeStatusActive indicates the node is connected and healthy.
 	NodeStatusActive NodeStatus = iota
+	// NodeStatusDraining indicates the node is shutting down gracefully.
+	// The lease TTL is counting down (grace period) while existing connections
+	// complete. No new connections should be routed to this node.
+	NodeStatusDraining
 	// NodeStatusLost indicates the node has disconnected and the grace period
 	// has expired without a reconnection.
 	NodeStatusLost
@@ -18,6 +22,8 @@ func (s NodeStatus) String() string {
 	switch s {
 	case NodeStatusActive:
 		return "ACTIVE"
+	case NodeStatusDraining:
+		return "DRAINING"
 	case NodeStatusLost:
 		return "LOST"
 	case NodeStatusDeregistered:

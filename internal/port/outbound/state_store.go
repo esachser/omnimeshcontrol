@@ -67,6 +67,10 @@ type StateStore interface {
 
 	// WatchTargetRoutes returns a channel of events for target route state changes.
 	WatchTargetRoutes(ctx context.Context) (<-chan TargetRouteStateEvent, error)
+
+	// WatchNodes returns a channel of events for node state changes.
+	// Used by NodeUpdateService to detect DRAINING status transitions.
+	WatchNodes(ctx context.Context) (<-chan NodeStateEvent, error)
 }
 
 // StateEventType indicates the kind of change in a state watch event.
@@ -87,4 +91,14 @@ type TargetRouteStateEvent struct {
 	Key string
 	// Route is the target route value (nil on delete events).
 	Route *model.TargetRoute
+}
+
+// NodeStateEvent represents a single change observed via a watch on Node state in the StateStore.
+type NodeStateEvent struct {
+	// Type indicates whether this is a put or delete event.
+	Type StateEventType
+	// Key is the storage key of the node that changed.
+	Key string
+	// Node is the node value (nil on delete events).
+	Node *model.Node
 }

@@ -144,6 +144,15 @@ func run(logger *slog.Logger) error {
 	routeApp.SetNodeTracker(nodeTracker)
 	routeDistributor.SetScopeDistributor(agentServer)
 
+	nodeUpdates := application.NewNodeUpdateService(stateStore, agentServer, logger.WithGroup("node_updates"))
+	routeDistributor.SetNodeDrainChecker(nodeUpdates)
+
+	go func() {
+		if err := nodeUpdates.Run(ctx); err != nil {
+			logger.Warn("node updates stopped", "error", err)
+		}
+	}()
+
 	policyUpdates := application.NewTrafficPolicyUpdateService(policyStore, agentServer, logger.WithGroup("policy_updates"))
 	go func() {
 		if err := policyUpdates.Run(ctx); err != nil {

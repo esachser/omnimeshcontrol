@@ -127,3 +127,67 @@ func TestNodeAppService_UpdateNodeServices(t *testing.T) {
 		t.Errorf("expected services to contain svc2 and svc3, got %v", updatedNode.Services)
 	}
 }
+
+func TestNodeAppService_DrainNode(t *testing.T) {
+	state := newMockStateStore()
+	tracker := newMockNodeTracker()
+	app := NewNodeAppService(state, tracker, newMockRouteManager(), nil)
+	ctx := context.Background()
+
+	node := &model.Node{
+		ID:       "node-drain",
+		Platform: model.NodePlatformLinux,
+		Addr:     "10.0.0.5:9090",
+	}
+	// Register so the node exists in state.
+	if err := app.RegisterNode(ctx, node); err != nil {
+		t.Fatalf("RegisterNode() error = %v", err)
+	}
+
+	// Drain the node.
+	if err := app.DrainNode(ctx, "node-drain"); err != nil {
+		t.Fatalf("DrainNode() error = %v", err)
+	}
+
+	// Node status must be DRAINING in the state store.
+	persisted, err := state.GetNode(ctx, "node-drain")
+	if err != nil {
+		t.Fatalf("GetNode() error = %v", err)
+	}
+	if persisted.Status != model.NodeStatusDraining {
+		t.Errorf("expected status DRAINING, got %v", persisted.Status)
+	}
+
+	// Tracker must have the node marked as disconnected (keepalive stopped).
+	if tracker.IsAlive("node-drain") {
+		t.Error("expected tracker to mark node-drain as not alive after drain")
+	}
+}
+
+func TestNodeAppService_OnStreamDisconnect_SkipsForDrainingNode(t *testing.T) {
+	state := newMockStateStore()
+	tracker := newMockNodeTracker()
+	app := NewNodeAppService(state, tracker, newMockRouteManager(), nil)
+	ctx := context.Background()
+
+	node := &model.Node{
+		ID:       "node-draining",
+		Platform: model.NodePlatformLinux,
+		Status:   model.NodeStatusDraining,
+	}
+	// Persist the node directly as DRAINING (simulating a drain already in progress).
+	state.PersistNode(ctx, node.ID, node, 0)
+	tracker.TrackNode(node.ID)
+	// OnDisconnect was called during drain, so mark it in tracker.
+	tracker.OnDisconnect(node.ID)
+
+	// OnStreamDisconnect should be a no-op since the node is already draining.
+	if err := app.OnStreamDisconnect(ctx, "node-draining"); err != nil {
+		t.Fatalf("OnStreamDisconnect() error = %v", err)
+	}
+
+	// Tracker should still have it as non-alive (set during drain, not changed by disconnect).
+	if tracker.IsAlive("node-draining") {
+		t.Error("expected node to remain not-alive after redundant OnStreamDisconnect")
+	}
+}

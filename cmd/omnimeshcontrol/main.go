@@ -39,15 +39,48 @@ func run(logger *slog.Logger) error {
 	defer stop()
 
 	// --- Configuration (from env or defaults) ---
-	etcdEndpointsRaw := envOrDefault("OMNIMESH_ETCD_ENDPOINTS", "http://localhost:2379")
-	etcdEndpoints := strings.Split(etcdEndpointsRaw, ",")
 	grpcAddr := envOrDefault("OMNIMESH_GRPC_ADDR", ":9090")
 	meshCIDR := envOrDefault("OMNIMESH_MESH_CIDR", "100.64.0.0/10")
 	dnsZone := envOrDefault("OMNIMESH_DNS_ZONE", "omnimesh.local")
 
+	// --- Build etcd client config from environment ---
+	//
+	// Security env vars (all optional; defaults give a plain-text dev setup):
+	//   OMNIMESH_ETCD_ENDPOINTS      – comma-separated list (default http://localhost:2379)
+	//   OMNIMESH_ETCD_CA_CERT        – path to PEM CA certificate for server verification
+	//   OMNIMESH_ETCD_CERT           – path to PEM client certificate (mTLS)
+	//   OMNIMESH_ETCD_KEY            – path to PEM client private key  (mTLS)
+	//   OMNIMESH_ETCD_TLS            – "true" to force TLS without cert files
+	//   OMNIMESH_ETCD_INSECURE       – "true" to skip server cert verification (dev only)
+	//   OMNIMESH_ETCD_USERNAME       – etcd RBAC username
+	//   OMNIMESH_ETCD_PASSWORD       – etcd RBAC password
+	//   OMNIMESH_ETCD_KEEPALIVE      – keep-alive probe interval  (e.g. "10s")
+	//   OMNIMESH_ETCD_KEEPALIVE_TO   – keep-alive timeout         (e.g. "5s")
+	//   OMNIMESH_ETCD_AUTOSYNC       – endpoint auto-sync interval (e.g. "30s")
+	//   OMNIMESH_ETCD_DIAL_TIMEOUT   – dial timeout               (default 5s)
+	etcdCfg := etcdstore.EtcdClientConfig{
+		Endpoints:          strings.Split(envOrDefault("OMNIMESH_ETCD_ENDPOINTS", "http://localhost:2379"), ","),
+		DialTimeout:        mustParseDuration("OMNIMESH_ETCD_DIAL_TIMEOUT", 5*time.Second),
+		CACertFile:         os.Getenv("OMNIMESH_ETCD_CA_CERT"),
+		CertFile:           os.Getenv("OMNIMESH_ETCD_CERT"),
+		KeyFile:            os.Getenv("OMNIMESH_ETCD_KEY"),
+		TLSEnabled:         os.Getenv("OMNIMESH_ETCD_TLS") == "true",
+		InsecureSkipVerify: os.Getenv("OMNIMESH_ETCD_INSECURE") == "true",
+		Username:           os.Getenv("OMNIMESH_ETCD_USERNAME"),
+		Password:           os.Getenv("OMNIMESH_ETCD_PASSWORD"),
+		KeepAliveTime:      mustParseDuration("OMNIMESH_ETCD_KEEPALIVE", 0),
+		KeepAliveTimeout:   mustParseDuration("OMNIMESH_ETCD_KEEPALIVE_TO", 0),
+		AutoSyncInterval:   mustParseDuration("OMNIMESH_ETCD_AUTOSYNC", 0),
+	}
+
 	// --- Connect to external etcd ---
-	logger.Info("connecting to etcd", "endpoints", etcdEndpoints)
-	etcdClient, err := etcdstore.NewEtcdClient(etcdEndpoints)
+	logger.Info("connecting to etcd",
+		"endpoints", etcdCfg.Endpoints,
+		"tls", etcdCfg.TLSEnabled || etcdCfg.CACertFile != "",
+		"mtls", etcdCfg.CertFile != "",
+		"auth", etcdCfg.Username != "",
+	)
+	etcdClient, err := etcdstore.NewEtcdClient(etcdCfg)
 	if err != nil {
 		return fmt.Errorf("connect etcd: %w", err)
 	}
@@ -200,4 +233,21 @@ func envOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// mustParseDuration reads a duration from an env var. If the variable is unset
+// or empty the provided default is returned. If the value cannot be parsed,
+// the program logs a warning and falls back to the default.
+func mustParseDuration(key string, defaultVal time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		slog.Warn("invalid duration env var, using default",
+			"key", key, "value", v, "default", defaultVal, "error", err)
+		return defaultVal
+	}
+	return d
 }

@@ -34,7 +34,7 @@ func testEtcdClient(t *testing.T) (*clientv3.Client, func()) {
 		t.Fatalf("failed to get etcd client endpoint: %v", err)
 	}
 
-	client, err := NewEtcdClient([]string{endpoint})
+	client, err := NewEtcdClient(EtcdClientConfig{Endpoints: []string{endpoint}})
 	if err != nil {
 		_ = container.Terminate(ctx)
 		t.Fatalf("failed to create etcd client: %v", err)

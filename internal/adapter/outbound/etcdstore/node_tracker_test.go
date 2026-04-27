@@ -5,13 +5,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-// testTracker creates a NodeLivenessTracker backed by the embedded etcd for tests.
+// testTracker creates a NodeLivenessTracker backed by a testcontainers etcd.
 // leaseTTL must be >= 1 (etcd minimum). Keep it short (2–5s) for fast tests.
-func testTracker(t *testing.T, embedded *EmbeddedEtcd, leaseTTL int64) *NodeLivenessTracker {
+func testTracker(t *testing.T, client *clientv3.Client, leaseTTL int64) *NodeLivenessTracker {
 	t.Helper()
-	tracker, err := NewNodeLivenessTracker(embedded.Client(), leaseTTL, nil)
+	tracker, err := NewNodeLivenessTracker(client, leaseTTL, nil)
 	if err != nil {
 		t.Fatalf("NewNodeLivenessTracker() error = %v", err)
 	}
@@ -20,10 +22,10 @@ func testTracker(t *testing.T, embedded *EmbeddedEtcd, leaseTTL int64) *NodeLive
 }
 
 func TestNodeLivenessTracker_TrackAndAlive(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	tracker := testTracker(t, embedded, 30)
+	tracker := testTracker(t, client, 30)
 
 	if _, err := tracker.TrackNode("node-1"); err != nil {
 		t.Fatalf("TrackNode() error = %v", err)
@@ -37,10 +39,10 @@ func TestNodeLivenessTracker_TrackAndAlive(t *testing.T) {
 }
 
 func TestNodeLivenessTracker_LeaseID(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	tracker := testTracker(t, embedded, 30)
+	tracker := testTracker(t, client, 30)
 
 	if tracker.LeaseID("node-1") != 0 {
 		t.Error("LeaseID() for untracked node should be 0")
@@ -58,11 +60,11 @@ func TestNodeLivenessTracker_TTLExpiry(t *testing.T) {
 	// Use minimum etcd TTL of 2s.
 	const leaseTTL = 2
 
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
 	var lostNodeID atomic.Value
-	tracker := testTracker(t, embedded, leaseTTL)
+	tracker := testTracker(t, client, leaseTTL)
 	tracker.RegisterCallback(func(_ context.Context, nodeID string) {
 		lostNodeID.Store(nodeID)
 	})
@@ -90,11 +92,11 @@ func TestNodeLivenessTracker_TTLExpiry(t *testing.T) {
 func TestNodeLivenessTracker_ReconnectCancelsExpiry(t *testing.T) {
 	const leaseTTL = 2
 
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
 	var lostCalled atomic.Int32
-	tracker := testTracker(t, embedded, leaseTTL)
+	tracker := testTracker(t, client, leaseTTL)
 	tracker.RegisterCallback(func(_ context.Context, _ string) {
 		lostCalled.Add(1)
 	})
@@ -125,11 +127,11 @@ func TestNodeLivenessTracker_ReconnectCancelsExpiry(t *testing.T) {
 func TestNodeLivenessTracker_UntrackNodeImmediate(t *testing.T) {
 	const leaseTTL = 30 // long TTL; untrack must be instant
 
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
 	var lostCalled atomic.Int32
-	tracker := testTracker(t, embedded, leaseTTL)
+	tracker := testTracker(t, client, leaseTTL)
 	tracker.RegisterCallback(func(_ context.Context, _ string) {
 		lostCalled.Add(1)
 	})
@@ -152,10 +154,10 @@ func TestNodeLivenessTracker_UntrackNodeImmediate(t *testing.T) {
 }
 
 func TestNodeLivenessTracker_ConnectedNodes(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	tracker := testTracker(t, embedded, 30)
+	tracker := testTracker(t, client, 30)
 
 	for _, id := range []string{"node-1", "node-2", "node-3"} {
 		if _, err := tracker.TrackNode(id); err != nil {

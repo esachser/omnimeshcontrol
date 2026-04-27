@@ -37,11 +37,11 @@ func (m *mockScopeDistributor) PushUpdate(_ context.Context, nodeID string, upda
 }
 
 func TestEtcdRouteDistributor_AnnounceAndAllRoutes(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	stateStore, _ := NewEtcdStateStore(embedded.Client())
-	resourceStore := NewEtcdResourceStore(embedded.Client())
+	stateStore, _ := NewEtcdStateStore(client)
+	resourceStore := NewEtcdResourceStore(client)
 	targetApp := application.NewTargetAppService(resourceStore, nil)
 	dist := NewEtcdRouteDistributor(stateStore, targetApp, nil)
 	dist.SetScopeDistributor(newMockScopeDistributor())
@@ -80,11 +80,11 @@ func TestEtcdRouteDistributor_AnnounceAndAllRoutes(t *testing.T) {
 }
 
 func TestEtcdRouteDistributor_WithdrawRoute(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	stateStore, _ := NewEtcdStateStore(embedded.Client())
-	resourceStore := NewEtcdResourceStore(embedded.Client())
+	stateStore, _ := NewEtcdStateStore(client)
+	resourceStore := NewEtcdResourceStore(client)
 	targetApp := application.NewTargetAppService(resourceStore, nil)
 	dist := NewEtcdRouteDistributor(stateStore, targetApp, nil)
 	dist.SetScopeDistributor(newMockScopeDistributor())
@@ -130,10 +130,10 @@ func TestEtcdRouteDistributor_WithdrawRoute(t *testing.T) {
 }
 
 func TestEtcdRouteDistributor_SeedFromExistingEtcdData(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	stateStore, _ := NewEtcdStateStore(embedded.Client())
+	stateStore, _ := NewEtcdStateStore(client)
 	ctx := context.Background()
 
 	// Write a route BEFORE Run is called (simulates a restart with existing data).
@@ -147,7 +147,7 @@ func TestEtcdRouteDistributor_SeedFromExistingEtcdData(t *testing.T) {
 		t.Fatalf("pre-seed Put() error = %v", err)
 	}
 
-	resourceStore := NewEtcdResourceStore(embedded.Client())
+	resourceStore := NewEtcdResourceStore(client)
 	targetApp := application.NewTargetAppService(resourceStore, nil)
 	dist := NewEtcdRouteDistributor(stateStore, targetApp, nil)
 	dist.SetScopeDistributor(newMockScopeDistributor())

@@ -9,6 +9,8 @@ bin/
 # etcd data directory
 data/
 
+.claude/
+
 # Test binary, built with `go test -c`
 *.test
 

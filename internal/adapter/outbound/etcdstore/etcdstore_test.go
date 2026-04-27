@@ -5,56 +5,54 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
-	"os"
 	"testing"
 	"time"
 
+	tcetcd "github.com/testcontainers/testcontainers-go/modules/etcd"
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-// testEmbedded starts an embedded etcd for testing and returns a cleanup function.
-func testEmbedded(t *testing.T) (*EmbeddedEtcd, func()) {
+// testEtcdClient starts an etcd container for the test and returns a connected
+// client plus a cleanup function. Each call creates an independent container so
+// tests can run in parallel safely.
+func testEtcdClient(t *testing.T) (*clientv3.Client, func()) {
 	t.Helper()
 
-	dataDir, err := os.MkdirTemp("", "omnimesh-etcd-test-*")
+	ctx := context.Background()
+
+	container, err := tcetcd.Run(ctx, "gcr.io/etcd-development/etcd:v3.5.21")
 	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
+		t.Fatalf("failed to start etcd container: %v", err)
 	}
 
-	// Use unique ports to allow parallel test execution.
-	clientPort := 12379 + os.Getpid()%1000
-	peerPort := 12380 + os.Getpid()%1000
-
-	cfg := EtcdConfig{
-		DataDir:         dataDir,
-		ListenClientURL: fmt.Sprintf("http://localhost:%d", clientPort),
-		ListenPeerURL:   fmt.Sprintf("http://localhost:%d", peerPort),
-		NodeName:        "test-node",
-		NewCluster:      true,
-		InitialCluster:  fmt.Sprintf("test-node=http://localhost:%d", peerPort),
+	endpoint, err := container.ClientEndpoint(ctx)
+	if err != nil {
+		_ = container.Terminate(ctx)
+		t.Fatalf("failed to get etcd client endpoint: %v", err)
 	}
 
-	embedded, err := StartEmbeddedEtcd(cfg)
+	client, err := NewEtcdClient([]string{endpoint})
 	if err != nil {
-		os.RemoveAll(dataDir)
-		t.Fatalf("failed to start embedded etcd: %v", err)
+		_ = container.Terminate(ctx)
+		t.Fatalf("failed to create etcd client: %v", err)
 	}
 
 	cleanup := func() {
-		embedded.Close()
-		os.RemoveAll(dataDir)
+		_ = client.Close()
+		_ = container.Terminate(ctx)
 	}
 
-	return embedded, cleanup
+	return client, cleanup
 }
 
 func TestEtcdResourceStore_PutAndGet(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	store := NewEtcdResourceStore(embedded.Client())
+	store := NewEtcdResourceStore(client)
 	ctx := context.Background()
 
 	resource := &model.Resource{
@@ -88,10 +86,10 @@ func TestEtcdResourceStore_PutAndGet(t *testing.T) {
 }
 
 func TestEtcdResourceStore_GetNotFound(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	store := NewEtcdResourceStore(embedded.Client())
+	store := NewEtcdResourceStore(client)
 	ctx := context.Background()
 
 	_, err := store.Get(ctx, "nonexistent")
@@ -101,10 +99,10 @@ func TestEtcdResourceStore_GetNotFound(t *testing.T) {
 }
 
 func TestEtcdResourceStore_List(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	store := NewEtcdResourceStore(embedded.Client())
+	store := NewEtcdResourceStore(client)
 	ctx := context.Background()
 
 	// Create multiple resources.
@@ -132,10 +130,10 @@ func TestEtcdResourceStore_List(t *testing.T) {
 }
 
 func TestEtcdResourceStore_Delete(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	store := NewEtcdResourceStore(embedded.Client())
+	store := NewEtcdResourceStore(client)
 	ctx := context.Background()
 
 	r := &model.Resource{
@@ -159,10 +157,10 @@ func TestEtcdResourceStore_Delete(t *testing.T) {
 }
 
 func TestEtcdResourceStore_CompareAndPut(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	store := NewEtcdResourceStore(embedded.Client())
+	store := NewEtcdResourceStore(client)
 	ctx := context.Background()
 
 	r := &model.Resource{
@@ -190,10 +188,10 @@ func TestEtcdResourceStore_CompareAndPut(t *testing.T) {
 }
 
 func TestEtcdResourceStore_Watch(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	store := NewEtcdResourceStore(embedded.Client())
+	store := NewEtcdResourceStore(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -227,10 +225,10 @@ func TestEtcdResourceStore_Watch(t *testing.T) {
 }
 
 func TestEtcdStateStore_IPAllocation(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	stateStore, err := NewEtcdStateStore(embedded.Client())
+	stateStore, err := NewEtcdStateStore(client)
 	if err != nil {
 		t.Fatalf("NewEtcdStateStore() error = %v", err)
 	}
@@ -277,10 +275,10 @@ func TestEtcdStateStore_IPAllocation(t *testing.T) {
 }
 
 func TestEtcdStateStore_NodeLifecycle(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	stateStore, err := NewEtcdStateStore(embedded.Client())
+	stateStore, err := NewEtcdStateStore(client)
 	if err != nil {
 		t.Fatalf("NewEtcdStateStore() error = %v", err)
 	}

@@ -1,5 +1,5 @@
 // Command omnimeshcontrol is the Omnimesh control plane server.
-// It starts an embedded etcd, wires up all application services, and
+// It connects to an external etcd cluster, wires up all application services, and
 // launches the gRPC server for both CLI and agent communication.
 package main
 
@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -38,38 +39,25 @@ func run(logger *slog.Logger) error {
 	defer stop()
 
 	// --- Configuration (from env or defaults) ---
-	dataDir := envOrDefault("OMNIMESH_ETCD_DATA_DIR", "/data/etcd")
-	clientURL := envOrDefault("OMNIMESH_ETCD_CLIENT_URL", "http://localhost:2379")
-	peerURL := envOrDefault("OMNIMESH_ETCD_PEER_URL", "http://localhost:2380")
+	etcdEndpointsRaw := envOrDefault("OMNIMESH_ETCD_ENDPOINTS", "http://localhost:2379")
+	etcdEndpoints := strings.Split(etcdEndpointsRaw, ",")
 	grpcAddr := envOrDefault("OMNIMESH_GRPC_ADDR", ":9090")
 	meshCIDR := envOrDefault("OMNIMESH_MESH_CIDR", "100.64.0.0/10")
 	dnsZone := envOrDefault("OMNIMESH_DNS_ZONE", "omnimesh.local")
-	initialCluster := envOrDefault("OMNIMESH_ETCD_INITIAL_CLUSTER", "omnimesh-default=http://localhost:2380")
-	initialClusterToken := envOrDefault("OMNIMESH_ETCD_INITIAL_CLUSTER_TOKEN", "omnimesh-default")
-	nodeName := envOrDefault("OMNIMESH_ETCD_NODE_NAME", "omnimesh-default")
-	newCluster := envOrDefault("OMNIMESH_ETCD_NEW_CLUSTER", "true")
-	// --- Start embedded etcd ---
-	logger.Info("starting embedded etcd", "dataDir", dataDir)
-	etcdCfg := etcdstore.EtcdConfig{
-		DataDir:             dataDir,
-		ListenClientURL:     clientURL,
-		ListenPeerURL:       peerURL,
-		InitialCluster:      initialCluster,
-		NodeName:            nodeName,
-		InitialClusterToken: initialClusterToken,
-		NewCluster:          newCluster == "true",
-	}
-	embedded, err := etcdstore.StartEmbeddedEtcd(etcdCfg)
+
+	// --- Connect to external etcd ---
+	logger.Info("connecting to etcd", "endpoints", etcdEndpoints)
+	etcdClient, err := etcdstore.NewEtcdClient(etcdEndpoints)
 	if err != nil {
-		return fmt.Errorf("start etcd: %w", err)
+		return fmt.Errorf("connect etcd: %w", err)
 	}
-	defer embedded.Close()
-	logger.Info("embedded etcd started")
+	defer etcdClient.Close()
+	logger.Info("etcd client ready")
 
 	// --- Wire outbound adapters ---
-	resourceStore := etcdstore.NewEtcdResourceStore(embedded.Client())
+	resourceStore := etcdstore.NewEtcdResourceStore(etcdClient)
 
-	stateStore, err := etcdstore.NewEtcdStateStore(embedded.Client())
+	stateStore, err := etcdstore.NewEtcdStateStore(etcdClient)
 	if err != nil {
 		return fmt.Errorf("create state store: %w", err)
 	}
@@ -77,11 +65,11 @@ func run(logger *slog.Logger) error {
 
 	targetApp := application.NewTargetAppService(resourceStore, logger)
 
-	dnsManager := etcddns.NewEtcdDNSRecordManager(embedded.Client(), dnsZone)
+	dnsManager := etcddns.NewEtcdDNSRecordManager(etcdClient, dnsZone)
 	routeDistributor := etcdstore.NewEtcdRouteDistributor(stateStore, targetApp, logger.WithGroup("route_dist"))
 	policyStore := etcdstore.NewEtcdTrafficPolicyStore(resourceStore)
-	healthStore := etcdstore.NewEtcdEndpointHealthStore(embedded.Client())
-	depStore := etcdstore.NewEtcdDependencyStore(embedded.Client())
+	healthStore := etcdstore.NewEtcdEndpointHealthStore(etcdClient)
+	depStore := etcdstore.NewEtcdDependencyStore(etcdClient)
 
 	// --- Parse default CIDR (used for namespaces that don't specify one) ---
 	defaultCIDR, err := netip.ParsePrefix(meshCIDR)
@@ -105,7 +93,7 @@ func run(logger *slog.Logger) error {
 	// NodeLivenessTracker backed by etcd leases — liveness, node state, and route
 	// keys are all attached to the same lease so etcd cleans them up atomically
 	// when the lease expires (grace period) or is revoked (graceful disconnect).
-	nodeTracker, err := etcdstore.NewNodeLivenessTracker(embedded.Client(), 30, logger)
+	nodeTracker, err := etcdstore.NewNodeLivenessTracker(etcdClient, 30, logger)
 	if err != nil {
 		return fmt.Errorf("create node tracker: %w", err)
 	}

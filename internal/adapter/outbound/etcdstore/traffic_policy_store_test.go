@@ -10,10 +10,10 @@ import (
 )
 
 func TestEtcdTrafficPolicyStore_CRUD(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	resourceStore := NewEtcdResourceStore(embedded.Client())
+	resourceStore := NewEtcdResourceStore(client)
 	store := NewEtcdTrafficPolicyStore(resourceStore)
 	ctx := context.Background()
 
@@ -61,10 +61,10 @@ func TestEtcdTrafficPolicyStore_CRUD(t *testing.T) {
 }
 
 func TestEtcdTrafficPolicyStore_Watch(t *testing.T) {
-	embedded, cleanup := testEmbedded(t)
+	client, cleanup := testEtcdClient(t)
 	defer cleanup()
 
-	resourceStore := NewEtcdResourceStore(embedded.Client())
+	resourceStore := NewEtcdResourceStore(client)
 	store := NewEtcdTrafficPolicyStore(resourceStore)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

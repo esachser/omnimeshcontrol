@@ -11,7 +11,6 @@ import (
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"google.golang.org/grpc"
 )
 
 // EtcdClientConfig holds all configuration needed to construct a secure etcd
@@ -94,7 +93,6 @@ func NewEtcdClient(cfg EtcdClientConfig) (*clientv3.Client, error) {
 		Username:         cfg.Username,
 		Password:         cfg.Password,
 		AutoSyncInterval: cfg.AutoSyncInterval,
-		DialOptions:      []grpc.DialOption{grpc.WithBlock()},
 	}
 
 	if cfg.KeepAliveTime > 0 {

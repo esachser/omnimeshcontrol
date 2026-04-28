@@ -140,6 +140,9 @@ func run(logger *slog.Logger) error {
 
 	healthApp := application.NewHealthAppService(healthStore, nodeTracker, logger)
 
+	authzEvaluator := domainservice.NewAuthzEvaluator()
+	authzApp := application.NewAuthzAppService(resourceStore, depStore, authzEvaluator, logger)
+
 	scopeApp := application.NewAgentScopeAppService(
 		resourceStore,
 		stateStore,
@@ -158,7 +161,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	grpcServer := grpc.NewServer()
-	controlServer := grpcadapter.NewControlPlaneServer(svcApp, nsApp, targetApp, policyApp, logger)
+	controlServer := grpcadapter.NewControlPlaneServer(svcApp, nsApp, targetApp, policyApp, authzApp, logger)
 	agentServer := grpcadapter.NewAgentServer(nodeApp, healthApp, scopeApp, routeApp, logger)
 
 	routeApp.SetScopeDistributor(agentServer)
@@ -192,6 +195,13 @@ func run(logger *slog.Logger) error {
 	go func() {
 		if err := healthUpdates.Run(ctx); err != nil {
 			logger.Warn("health updates stopped", "error", err)
+		}
+	}()
+
+	authzUpdates := application.NewAuthzPolicyUpdateService(resourceStore, agentServer, logger.WithGroup("authz_updates"))
+	go func() {
+		if err := authzUpdates.Run(ctx); err != nil {
+			logger.Warn("authz policy updates stopped", "error", err)
 		}
 	}()
 

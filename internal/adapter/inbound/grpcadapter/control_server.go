@@ -25,6 +25,7 @@ type ControlPlaneServer struct {
 	namespaces inbound.NamespaceManager
 	targets    inbound.TargetManager
 	policies   inbound.TrafficPolicyManager
+	authz      inbound.AuthorizationPolicyManager
 	logger     *slog.Logger
 }
 
@@ -34,6 +35,7 @@ func NewControlPlaneServer(
 	namespaces inbound.NamespaceManager,
 	targets inbound.TargetManager,
 	policies inbound.TrafficPolicyManager,
+	authz inbound.AuthorizationPolicyManager,
 	logger *slog.Logger,
 ) *ControlPlaneServer {
 	if logger == nil {
@@ -44,6 +46,7 @@ func NewControlPlaneServer(
 		namespaces: namespaces,
 		targets:    targets,
 		policies:   policies,
+		authz:      authz,
 		logger:     logger,
 	}
 }
@@ -64,6 +67,8 @@ func (s *ControlPlaneServer) ApplyResource(ctx context.Context, req *omnimeshv1.
 		return s.applyNetworkTarget(ctx, r)
 	case "TrafficPolicy":
 		return s.applyTrafficPolicy(ctx, r)
+	case "AuthorizationPolicy":
+		return s.applyAuthorizationPolicy(ctx, r)
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported resource kind: %s", r.Kind)
 	}
@@ -199,6 +204,73 @@ func (s *ControlPlaneServer) applyTrafficPolicy(ctx context.Context, r *omnimesh
 	}, nil
 }
 
+func (s *ControlPlaneServer) applyAuthorizationPolicy(ctx context.Context, r *omnimeshv1.Resource) (*omnimeshv1.ApplyResourceResponse, error) {
+	if r.Metadata == nil {
+		return nil, status.Error(codes.InvalidArgument, "metadata is required")
+	}
+
+	var spec struct {
+		Action      string `json:"action"`
+		Source      struct {
+			Namespace string `json:"namespace"`
+			Name      string `json:"name"`
+		} `json:"source"`
+		Destination struct {
+			Namespace string `json:"namespace"`
+			Name      string `json:"name"`
+		} `json:"destination"`
+	}
+	if len(r.Spec) > 0 {
+		if err := json.Unmarshal(r.Spec, &spec); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid spec: %v", err)
+		}
+	}
+
+	policy := &model.AuthorizationPolicy{
+		Name:      r.Metadata.Name,
+		Namespace: r.Metadata.Namespace,
+		Source: model.PolicySelector{
+			Namespace: spec.Source.Namespace,
+			Name:      spec.Source.Name,
+		},
+		Destination: model.PolicySelector{
+			Namespace: spec.Destination.Namespace,
+			Name:      spec.Destination.Name,
+		},
+	}
+
+	switch spec.Action {
+	case "DENY", "deny":
+		policy.Action = model.PolicyActionDeny
+	default:
+		policy.Action = model.PolicyActionAllow
+	}
+
+	// Try get first — if exists, delete and recreate (idempotent apply).
+	_, getErr := s.authz.Get(ctx, policy.Namespace, policy.Name)
+	if getErr != nil {
+		// Policy does not exist — create.
+		if err := s.authz.Create(ctx, policy); err != nil {
+			if errors.Is(err, domain.ErrDuplicatePolicy) {
+				return nil, status.Errorf(codes.AlreadyExists, "authorization policy already exists: %v", err)
+			}
+			return nil, status.Errorf(codes.Internal, "create authorization policy: %v", err)
+		}
+	} else {
+		// Policy exists — delete then recreate for idempotent apply.
+		if err := s.authz.Delete(ctx, policy.Namespace, policy.Name); err != nil {
+			return nil, status.Errorf(codes.Internal, "delete existing authorization policy: %v", err)
+		}
+		if err := s.authz.Create(ctx, policy); err != nil {
+			return nil, status.Errorf(codes.Internal, "recreate authorization policy: %v", err)
+		}
+	}
+
+	return &omnimeshv1.ApplyResourceResponse{
+		Resource: authzPolicyToProto(policy),
+	}, nil
+}
+
 // GetResource retrieves a resource by kind/namespace/name.
 func (s *ControlPlaneServer) GetResource(ctx context.Context, req *omnimeshv1.GetResourceRequest) (*omnimeshv1.GetResourceResponse, error) {
 	switch req.Kind {
@@ -229,6 +301,13 @@ func (s *ControlPlaneServer) GetResource(ctx context.Context, req *omnimeshv1.Ge
 			return nil, status.Errorf(codes.NotFound, "%v", err)
 		}
 		return &omnimeshv1.GetResourceResponse{Resource: trafficPolicyResourceToProto(policy)}, nil
+
+	case "AuthorizationPolicy":
+		policy, err := s.authz.Get(ctx, req.Namespace, req.Name)
+		if err != nil {
+			return nil, status.Errorf(codes.NotFound, "%v", err)
+		}
+		return &omnimeshv1.GetResourceResponse{Resource: authzPolicyToProto(policy)}, nil
 
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported kind: %s", req.Kind)
@@ -282,6 +361,17 @@ func (s *ControlPlaneServer) ListResources(ctx context.Context, req *omnimeshv1.
 		}
 		return &omnimeshv1.ListResourcesResponse{Resources: protos}, nil
 
+	case "AuthorizationPolicy":
+		policies, err := s.authz.List(ctx, req.Namespace)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		var protos []*omnimeshv1.Resource
+		for _, policy := range policies {
+			protos = append(protos, authzPolicyToProto(policy))
+		}
+		return &omnimeshv1.ListResourcesResponse{Resources: protos}, nil
+
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported kind: %s", req.Kind)
 	}
@@ -310,6 +400,12 @@ func (s *ControlPlaneServer) DeleteResource(ctx context.Context, req *omnimeshv1
 
 	case "TrafficPolicy":
 		if err := s.policies.DeleteTrafficPolicy(ctx, req.Namespace, req.Name); err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		return &omnimeshv1.DeleteResourceResponse{}, nil
+
+	case "AuthorizationPolicy":
+		if err := s.authz.Delete(ctx, req.Namespace, req.Name); err != nil {
 			return nil, status.Errorf(codes.Internal, "%v", err)
 		}
 		return &omnimeshv1.DeleteResourceResponse{}, nil
@@ -382,6 +478,31 @@ func trafficPolicyResourceToProto(policy *model.TrafficPolicy) *omnimeshv1.Resou
 	return &omnimeshv1.Resource{
 		ApiVersion: "traffic.omnimesh.io/v1",
 		Kind:       "TrafficPolicy",
+		Metadata: &omnimeshv1.ResourceMetadata{
+			Name:      policy.Name,
+			Namespace: policy.Namespace,
+		},
+		Spec: specJSON,
+	}
+}
+
+func authzPolicyToProto(policy *model.AuthorizationPolicy) *omnimeshv1.Resource {
+	spec := map[string]any{
+		"action": policy.Action.String(),
+		"source": map[string]any{
+			"namespace": policy.Source.Namespace,
+			"name":      policy.Source.Name,
+		},
+		"destination": map[string]any{
+			"namespace": policy.Destination.Namespace,
+			"name":      policy.Destination.Name,
+		},
+	}
+	specJSON, _ := json.Marshal(spec)
+
+	return &omnimeshv1.Resource{
+		ApiVersion: "policy.omnimesh.io/v1",
+		Kind:       "AuthorizationPolicy",
 		Metadata: &omnimeshv1.ResourceMetadata{
 			Name:      policy.Name,
 			Namespace: policy.Namespace,

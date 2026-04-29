@@ -210,8 +210,8 @@ func (s *ControlPlaneServer) applyAuthorizationPolicy(ctx context.Context, r *om
 	}
 
 	var spec struct {
-		Action      string `json:"action"`
-		Source      struct {
+		Action string `json:"action"`
+		Source struct {
 			Namespace string `json:"namespace"`
 			Name      string `json:"name"`
 		} `json:"source"`
@@ -257,12 +257,9 @@ func (s *ControlPlaneServer) applyAuthorizationPolicy(ctx context.Context, r *om
 			return nil, status.Errorf(codes.Internal, "create authorization policy: %v", err)
 		}
 	} else {
-		// Policy exists — delete then recreate for idempotent apply.
-		if err := s.authz.Delete(ctx, policy.Namespace, policy.Name); err != nil {
-			return nil, status.Errorf(codes.Internal, "delete existing authorization policy: %v", err)
-		}
-		if err := s.authz.Create(ctx, policy); err != nil {
-			return nil, status.Errorf(codes.Internal, "recreate authorization policy: %v", err)
+		// Policy exists — update.
+		if err := s.authz.Update(ctx, policy); err != nil {
+			return nil, status.Errorf(codes.Internal, "update authorization policy: %v", err)
 		}
 	}
 

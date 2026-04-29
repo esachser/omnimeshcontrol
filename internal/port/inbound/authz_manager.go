@@ -13,6 +13,8 @@ type AuthorizationPolicyManager interface {
 	// Create creates a new authorization policy.
 	// Returns domain.ErrDuplicatePolicy if a policy with the same name already exists.
 	Create(ctx context.Context, policy *model.AuthorizationPolicy) error
+	// Update updates an existing authorization policy.
+	Update(ctx context.Context, policy *model.AuthorizationPolicy) error
 	// Get retrieves an authorization policy by namespace and name.
 	Get(ctx context.Context, namespace, name string) (*model.AuthorizationPolicy, error)
 	// List returns all authorization policies in the given namespace.

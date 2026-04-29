@@ -286,6 +286,10 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 		snapshot.EndpointHealth = append(snapshot.EndpointHealth, endpointHealthToProto(health))
 	}
 
+	for _, policy := range scope.AuthzPolicies {
+		snapshot.AuthzPolicies = append(snapshot.AuthzPolicies, authzPolicyToAgentProto(policy))
+	}
+
 	return snapshot
 }
 
@@ -363,6 +367,10 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 
 	for _, health := range update.EndpointHealth {
 		protoUpdate.EndpointHealth = append(protoUpdate.EndpointHealth, endpointHealthToProto(health))
+	}
+
+	for _, policy := range update.AuthzPolicies {
+		protoUpdate.AuthzPolicies = append(protoUpdate.AuthzPolicies, authzPolicyToAgentProto(policy))
 	}
 
 	return protoUpdate
@@ -483,6 +491,24 @@ func endpointHealthToProto(h model.EndpointHealth) *omnimeshv1.EndpointHealthInf
 		Status:      healthStatusToProto(h.Status),
 		ProbeType:   h.ProbeType.String(),
 		NodeId:      h.NodeID,
+	}
+}
+
+func authzPolicyToAgentProto(policy model.AuthorizationPolicy) *omnimeshv1.AuthzPolicyInfo {
+	return &omnimeshv1.AuthzPolicyInfo{
+		Namespace: policy.Namespace,
+		Name:      policy.Name,
+		Action:    policy.Action.String(),
+		Source: &omnimeshv1.SelectorInfo{
+			Namespace: policy.Source.Namespace,
+			Name:      policy.Source.Name,
+			Labels:    policy.Source.Labels,
+		},
+		Destination: &omnimeshv1.SelectorInfo{
+			Namespace: policy.Destination.Namespace,
+			Name:      policy.Destination.Name,
+			Labels:    policy.Destination.Labels,
+		},
 	}
 }
 

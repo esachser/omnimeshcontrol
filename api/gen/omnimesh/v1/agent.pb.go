@@ -821,6 +821,7 @@ type ScopeUpdate struct {
 	Routes          []*RouteInfo           `protobuf:"bytes,3,rep,name=routes,proto3" json:"routes,omitempty"`
 	TrafficPolicies []*TrafficPolicyInfo   `protobuf:"bytes,4,rep,name=traffic_policies,json=trafficPolicies,proto3" json:"traffic_policies,omitempty"`
 	EndpointHealth  []*EndpointHealthInfo  `protobuf:"bytes,5,rep,name=endpoint_health,json=endpointHealth,proto3" json:"endpoint_health,omitempty"`
+	AuthzPolicies   []*AuthzPolicyInfo     `protobuf:"bytes,6,rep,name=authz_policies,json=authzPolicies,proto3" json:"authz_policies,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -886,6 +887,13 @@ func (x *ScopeUpdate) GetTrafficPolicies() []*TrafficPolicyInfo {
 func (x *ScopeUpdate) GetEndpointHealth() []*EndpointHealthInfo {
 	if x != nil {
 		return x.EndpointHealth
+	}
+	return nil
+}
+
+func (x *ScopeUpdate) GetAuthzPolicies() []*AuthzPolicyInfo {
+	if x != nil {
+		return x.AuthzPolicies
 	}
 	return nil
 }
@@ -1926,13 +1934,14 @@ const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"\x06routes\x18\x02 \x03(\v2\x16.omnimesh.v1.RouteInfoR\x06routes\x12I\n" +
 	"\x10traffic_policies\x18\x03 \x03(\v2\x1e.omnimesh.v1.TrafficPolicyInfoR\x0ftrafficPolicies\x12C\n" +
 	"\x0eauthz_policies\x18\x04 \x03(\v2\x1c.omnimesh.v1.AuthzPolicyInfoR\rauthzPolicies\x12H\n" +
-	"\x0fendpoint_health\x18\x05 \x03(\v2\x1f.omnimesh.v1.EndpointHealthInfoR\x0eendpointHealth\"\xba\x02\n" +
+	"\x0fendpoint_health\x18\x05 \x03(\v2\x1f.omnimesh.v1.EndpointHealthInfoR\x0eendpointHealth\"\xff\x02\n" +
 	"\vScopeUpdate\x120\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x1c.omnimesh.v1.ScopeUpdateTypeR\x04type\x124\n" +
 	"\bservices\x18\x02 \x03(\v2\x18.omnimesh.v1.ServiceInfoR\bservices\x12.\n" +
 	"\x06routes\x18\x03 \x03(\v2\x16.omnimesh.v1.RouteInfoR\x06routes\x12I\n" +
 	"\x10traffic_policies\x18\x04 \x03(\v2\x1e.omnimesh.v1.TrafficPolicyInfoR\x0ftrafficPolicies\x12H\n" +
-	"\x0fendpoint_health\x18\x05 \x03(\v2\x1f.omnimesh.v1.EndpointHealthInfoR\x0eendpointHealth\"\x8c\x01\n" +
+	"\x0fendpoint_health\x18\x05 \x03(\v2\x1f.omnimesh.v1.EndpointHealthInfoR\x0eendpointHealth\x12C\n" +
+	"\x0eauthz_policies\x18\x06 \x03(\v2\x1c.omnimesh.v1.AuthzPolicyInfoR\rauthzPolicies\"\x8c\x01\n" +
 	"\vServiceInfo\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
@@ -2113,29 +2122,30 @@ var file_omnimesh_v1_agent_proto_depIdxs = []int32{
 	14, // 19: omnimesh.v1.ScopeUpdate.routes:type_name -> omnimesh.v1.RouteInfo
 	16, // 20: omnimesh.v1.ScopeUpdate.traffic_policies:type_name -> omnimesh.v1.TrafficPolicyInfo
 	26, // 21: omnimesh.v1.ScopeUpdate.endpoint_health:type_name -> omnimesh.v1.EndpointHealthInfo
-	15, // 22: omnimesh.v1.RouteInfo.target_nodes:type_name -> omnimesh.v1.NodeEndpointInfo
-	29, // 23: omnimesh.v1.NodeEndpointInfo.labels:type_name -> omnimesh.v1.NodeEndpointInfo.LabelsEntry
-	17, // 24: omnimesh.v1.TrafficPolicyInfo.retry:type_name -> omnimesh.v1.RetryPolicyInfo
-	18, // 25: omnimesh.v1.TrafficPolicyInfo.circuit_breaker:type_name -> omnimesh.v1.CircuitBreakerPolicyInfo
-	19, // 26: omnimesh.v1.TrafficPolicyInfo.rate_limiter:type_name -> omnimesh.v1.RateLimitPolicyInfo
-	20, // 27: omnimesh.v1.TrafficPolicyInfo.load_balancer:type_name -> omnimesh.v1.LoadBalancerPolicyInfo
-	21, // 28: omnimesh.v1.TrafficPolicyInfo.outlier_detection:type_name -> omnimesh.v1.OutlierDetectionPolicyInfo
-	23, // 29: omnimesh.v1.TrafficPolicyInfo.routes:type_name -> omnimesh.v1.TrafficRouteInfo
-	2,  // 30: omnimesh.v1.RateLimitPolicyInfo.limit_exceeded_action:type_name -> omnimesh.v1.RateLimitAction
-	3,  // 31: omnimesh.v1.LoadBalancerPolicyInfo.algorithm:type_name -> omnimesh.v1.LoadBalancerAlgorithm
-	30, // 32: omnimesh.v1.TrafficRouteDestinationInfo.labels:type_name -> omnimesh.v1.TrafficRouteDestinationInfo.LabelsEntry
-	22, // 33: omnimesh.v1.TrafficRouteInfo.destination:type_name -> omnimesh.v1.TrafficRouteDestinationInfo
-	25, // 34: omnimesh.v1.AuthzPolicyInfo.source:type_name -> omnimesh.v1.SelectorInfo
-	25, // 35: omnimesh.v1.AuthzPolicyInfo.destination:type_name -> omnimesh.v1.SelectorInfo
-	31, // 36: omnimesh.v1.SelectorInfo.labels:type_name -> omnimesh.v1.SelectorInfo.LabelsEntry
-	0,  // 37: omnimesh.v1.EndpointHealthInfo.status:type_name -> omnimesh.v1.EndpointHealthStatus
-	4,  // 38: omnimesh.v1.AgentService.AgentStream:input_type -> omnimesh.v1.AgentStreamRequest
-	10, // 39: omnimesh.v1.AgentService.AgentStream:output_type -> omnimesh.v1.AgentStreamResponse
-	39, // [39:40] is the sub-list for method output_type
-	38, // [38:39] is the sub-list for method input_type
-	38, // [38:38] is the sub-list for extension type_name
-	38, // [38:38] is the sub-list for extension extendee
-	0,  // [0:38] is the sub-list for field type_name
+	24, // 22: omnimesh.v1.ScopeUpdate.authz_policies:type_name -> omnimesh.v1.AuthzPolicyInfo
+	15, // 23: omnimesh.v1.RouteInfo.target_nodes:type_name -> omnimesh.v1.NodeEndpointInfo
+	29, // 24: omnimesh.v1.NodeEndpointInfo.labels:type_name -> omnimesh.v1.NodeEndpointInfo.LabelsEntry
+	17, // 25: omnimesh.v1.TrafficPolicyInfo.retry:type_name -> omnimesh.v1.RetryPolicyInfo
+	18, // 26: omnimesh.v1.TrafficPolicyInfo.circuit_breaker:type_name -> omnimesh.v1.CircuitBreakerPolicyInfo
+	19, // 27: omnimesh.v1.TrafficPolicyInfo.rate_limiter:type_name -> omnimesh.v1.RateLimitPolicyInfo
+	20, // 28: omnimesh.v1.TrafficPolicyInfo.load_balancer:type_name -> omnimesh.v1.LoadBalancerPolicyInfo
+	21, // 29: omnimesh.v1.TrafficPolicyInfo.outlier_detection:type_name -> omnimesh.v1.OutlierDetectionPolicyInfo
+	23, // 30: omnimesh.v1.TrafficPolicyInfo.routes:type_name -> omnimesh.v1.TrafficRouteInfo
+	2,  // 31: omnimesh.v1.RateLimitPolicyInfo.limit_exceeded_action:type_name -> omnimesh.v1.RateLimitAction
+	3,  // 32: omnimesh.v1.LoadBalancerPolicyInfo.algorithm:type_name -> omnimesh.v1.LoadBalancerAlgorithm
+	30, // 33: omnimesh.v1.TrafficRouteDestinationInfo.labels:type_name -> omnimesh.v1.TrafficRouteDestinationInfo.LabelsEntry
+	22, // 34: omnimesh.v1.TrafficRouteInfo.destination:type_name -> omnimesh.v1.TrafficRouteDestinationInfo
+	25, // 35: omnimesh.v1.AuthzPolicyInfo.source:type_name -> omnimesh.v1.SelectorInfo
+	25, // 36: omnimesh.v1.AuthzPolicyInfo.destination:type_name -> omnimesh.v1.SelectorInfo
+	31, // 37: omnimesh.v1.SelectorInfo.labels:type_name -> omnimesh.v1.SelectorInfo.LabelsEntry
+	0,  // 38: omnimesh.v1.EndpointHealthInfo.status:type_name -> omnimesh.v1.EndpointHealthStatus
+	4,  // 39: omnimesh.v1.AgentService.AgentStream:input_type -> omnimesh.v1.AgentStreamRequest
+	10, // 40: omnimesh.v1.AgentService.AgentStream:output_type -> omnimesh.v1.AgentStreamResponse
+	40, // [40:41] is the sub-list for method output_type
+	39, // [39:40] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_omnimesh_v1_agent_proto_init() }

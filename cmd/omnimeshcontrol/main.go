@@ -151,6 +151,7 @@ func run(logger *slog.Logger) error {
 		depStore,
 		routeDistributor,
 		targetApp,
+		authzApp,
 		logger.WithGroup("scope_app"),
 	)
 

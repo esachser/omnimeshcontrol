@@ -73,6 +73,32 @@ func (s *AuthzAppService) Create(ctx context.Context, policy *model.Authorizatio
 	return nil
 }
 
+func (s *AuthzAppService) Update(ctx context.Context, policy *model.AuthorizationPolicy) error {
+	if policy.Name == "" {
+		return fmt.Errorf("authz update: %w: name is required", domain.ErrInvalidName)
+	}
+
+	resource := authzPolicyToResource(policy)
+	if _, err := s.resources.Put(ctx, s.policyKey(policy.Namespace, policy.Name), resource); err != nil {
+		return fmt.Errorf("authz update: %w", err)
+	}
+
+	// If this is an ALLOW policy, update the dependency graph.
+	if policy.Action == model.PolicyActionAllow {
+		if err := s.updateDependencies(ctx, policy); err != nil {
+			s.logger.Warn("failed to update dependencies for authz policy",
+				"name", policy.Name, "error", err)
+		}
+	}
+
+	s.logger.Info("authorization policy updated",
+		"name", policy.Name,
+		"namespace", policy.Namespace,
+		"action", policy.Action,
+	)
+	return nil
+}
+
 // Get retrieves an authorization policy by namespace and name.
 func (s *AuthzAppService) Get(ctx context.Context, namespace, name string) (*model.AuthorizationPolicy, error) {
 	key := s.policyKey(namespace, name)
@@ -86,6 +112,9 @@ func (s *AuthzAppService) Get(ctx context.Context, namespace, name string) (*mod
 // List returns all authorization policies in a namespace.
 func (s *AuthzAppService) List(ctx context.Context, namespace string) ([]*model.AuthorizationPolicy, error) {
 	prefix := fmt.Sprintf("policy.omnimesh.io/v1/AuthorizationPolicy/%s/", namespace)
+	if namespace == "" {
+		prefix = "policy.omnimesh.io/v1/AuthorizationPolicy/"
+	}
 	resources, err := s.resources.List(ctx, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("authz list: %w", err)

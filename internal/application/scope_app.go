@@ -22,6 +22,7 @@ type AgentScopeAppService struct {
 	depStore    outbound.DependencyStore
 	routes      outbound.RouteDistributor
 	targets     inbound.TargetManager
+	authz       inbound.AuthorizationPolicyManager
 	logger      *slog.Logger
 }
 
@@ -34,6 +35,7 @@ func NewAgentScopeAppService(
 	depStore outbound.DependencyStore,
 	routes outbound.RouteDistributor,
 	targets inbound.TargetManager,
+	authz inbound.AuthorizationPolicyManager,
 	logger *slog.Logger,
 ) *AgentScopeAppService {
 	if logger == nil {
@@ -47,6 +49,7 @@ func NewAgentScopeAppService(
 		depStore:    depStore,
 		routes:      routes,
 		targets:     targets,
+		authz:       authz,
 		logger:      logger,
 	}
 }
@@ -140,6 +143,16 @@ func (s *AgentScopeAppService) GetAgentScope(ctx context.Context, nodeID string)
 
 			scope.Routes = append(scope.Routes, routeCopy)
 		}
+	}
+
+	// Add authorization policies to scope
+	authzPolicies, err := s.authz.List(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("scope: list authorization policies: %w", err)
+	}
+	scope.AuthzPolicies = make([]model.AuthorizationPolicy, len(authzPolicies))
+	for i, ap := range authzPolicies {
+		scope.AuthzPolicies[i] = *ap
 	}
 
 	s.logger.Info("agent scope computed",

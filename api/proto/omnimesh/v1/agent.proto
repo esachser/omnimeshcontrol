@@ -87,6 +87,7 @@ message ScopeUpdate {
   repeated RouteInfo routes = 3;
   repeated TrafficPolicyInfo traffic_policies = 4;
   repeated EndpointHealthInfo endpoint_health = 5;
+  repeated AuthzPolicyInfo authz_policies = 6;
 }
 
 enum ScopeUpdateType {

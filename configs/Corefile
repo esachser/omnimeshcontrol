@@ -1,0 +1,14 @@
+omnimesh.local {
+    etcd {
+        path /skydns
+        endpoint {$OMNIMESH_ETCD_ENDPOINT}
+    }
+    log
+    errors
+}
+
+. {
+    forward . 8.8.8.8 1.1.1.1
+    log
+    errors
+}

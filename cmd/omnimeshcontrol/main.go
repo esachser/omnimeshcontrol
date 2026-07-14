@@ -19,8 +19,10 @@ import (
 	"github.com/esachser/omnimeshcontrol/internal/adapter/inbound/grpcadapter"
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/etcddns"
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/etcdstore"
+	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/spire"
 	"github.com/esachser/omnimeshcontrol/internal/application"
 	domainservice "github.com/esachser/omnimeshcontrol/internal/domain/service"
+	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 	"google.golang.org/grpc"
 )
 
@@ -42,6 +44,20 @@ func run(logger *slog.Logger) error {
 	grpcAddr := envOrDefault("OMNIMESH_GRPC_ADDR", ":9090")
 	meshCIDR := envOrDefault("OMNIMESH_MESH_CIDR", "100.64.0.0/10")
 	dnsZone := envOrDefault("OMNIMESH_DNS_ZONE", "omnimesh.local")
+
+	// --- SPIRE Configuration ---
+	spireEnabled := envOrDefault("OMNIMESH_SPIRE_ENABLED", "false") == "true"
+	defaultSpireAddr := "\\spire-server\\private\\api"
+	if os.PathSeparator == '/' {
+		defaultSpireAddr = "unix:///tmp/spire-server/private/api.sock"
+	}
+	spireServerAddr := envOrDefault("OMNIMESH_SPIRE_SERVER_ADDR", defaultSpireAddr)
+	spireTrustDomain := envOrDefault("OMNIMESH_SPIRE_TRUST_DOMAIN", dnsZone)
+	spireParentIDs := strings.Split(envOrDefault("OMNIMESH_SPIRE_PARENT_IDS", "spiffe://omnimesh.local/agents/dev-agent"), ",")
+	spireSelectors := strings.Split(envOrDefault("OMNIMESH_SPIRE_SELECTORS", "windows:process-name:{{.Name}}.exe,unix:user:{{.Name}}"), ",")
+	spireCACert := os.Getenv("OMNIMESH_SPIRE_CA_CERT")
+	spireClientCert := os.Getenv("OMNIMESH_SPIRE_CLIENT_CERT")
+	spireClientKey := os.Getenv("OMNIMESH_SPIRE_CLIENT_KEY")
 
 	// --- Build etcd client config from environment ---
 	//
@@ -113,11 +129,33 @@ func run(logger *slog.Logger) error {
 	// --- Wire application services ---
 	nsApp := application.NewNamespaceAppService(resourceStore, defaultCIDR, logger)
 
+	// --- Initialize SPIRE Identity Manager if enabled ---
+	var identityManager outbound.IdentityManager
+	if spireEnabled {
+		logger.Info("initializing SPIRE identity manager...")
+		spireMgr, err := spire.NewIdentityManager(spire.Config{
+			ServerAddr:   spireServerAddr,
+			TrustDomain:  spireTrustDomain,
+			ParentIDs:    spireParentIDs,
+			Selectors:    spireSelectors,
+			CACertFile:   spireCACert,
+			CertFile:     spireClientCert,
+			KeyFile:      spireClientKey,
+		}, logger.WithGroup("spire"))
+		if err != nil {
+			return fmt.Errorf("failed to initialize SPIRE identity manager: %w", err)
+		}
+		defer spireMgr.Close()
+		identityManager = spireMgr
+	} else {
+		logger.Info("SPIRE identity manager is disabled")
+	}
+
 	svcApp := application.NewServiceAppService(application.ServiceAppServiceConfig{
 		Resources:  resourceStore,
 		State:      stateStore,
 		DNS:        dnsManager,
-		Identity:   nil, // SPIRE integration deferred
+		Identity:   identityManager,
 		Namespaces: nsApp,
 		DNSZone:    dnsZone,
 		Logger:     logger,

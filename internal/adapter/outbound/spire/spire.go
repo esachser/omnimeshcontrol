@@ -216,8 +216,8 @@ func dialSpire(ctx context.Context, cfg Config) (*grpc.ClientConn, error) {
 	var address string
 
 	rawAddress := cfg.ServerAddr
-	if strings.HasPrefix(rawAddress, "npipe://") {
-		rawAddress = strings.TrimPrefix(rawAddress, "npipe://")
+	if after, ok := strings.CutPrefix(rawAddress, "npipe://"); ok {
+		rawAddress = after
 	}
 
 	// Normalize Windows Named Pipe formats
@@ -282,7 +282,7 @@ func dialSpire(ctx context.Context, cfg Config) (*grpc.ClientConn, error) {
 		opts = append(opts, grpc.WithContextDialer(dialer))
 	}
 
-	return grpc.DialContext(ctx, address, opts...)
+	return grpc.NewClient(address, opts...)
 }
 
 // resolveSelectors processes selector templates and produces selectors for workload.

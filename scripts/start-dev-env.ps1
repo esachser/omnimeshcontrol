@@ -33,7 +33,8 @@ param(
     [string] $SpireServerBin = "spire-server",
     [string] $SpireAgentBin  = "spire-agent",
     [string] $CoreDNSBin     = "coredns",
-    [string] $LogLevel       = "info"
+    [string] $LogLevel       = "info",
+    [switch] $NoWait
 )
 
 Set-StrictMode -Version Latest
@@ -153,6 +154,12 @@ try {
     } -ArgumentList $CoreDNSScript, $CoreDNSBin
     $Jobs += $corednsJob
 
+    if ($NoWait) {
+        Write-Host ""
+        Write-Host "Dev environment jobs started (NoWait mode)." -ForegroundColor Green
+        return $Jobs
+    }
+
     # ---------------------------------------------------------------------------
     # Status Summary
     # ---------------------------------------------------------------------------
@@ -166,14 +173,16 @@ try {
 
 }
 finally {
-    # ---------------------------------------------------------------------------
-    # Graceful Shutdown
-    # ---------------------------------------------------------------------------
-    Write-Host "Stopping all dev environment jobs..." -ForegroundColor Yellow
-    foreach ($job in $Jobs) {
-        Stop-Job  -Job $job -ErrorAction SilentlyContinue
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-        Write-Host "  Stopped background job: $($job.Name)"
+    if (-not $NoWait) {
+        # ---------------------------------------------------------------------------
+        # Graceful Shutdown
+        # ---------------------------------------------------------------------------
+        Write-Host "Stopping all dev environment jobs..." -ForegroundColor Yellow
+        foreach ($job in $Jobs) {
+            Stop-Job  -Job $job -ErrorAction SilentlyContinue
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+            Write-Host "  Stopped background job: $($job.Name)"
+        }
+        Write-Host "All jobs stopped." -ForegroundColor Green
     }
-    Write-Host "All jobs stopped." -ForegroundColor Green
 }

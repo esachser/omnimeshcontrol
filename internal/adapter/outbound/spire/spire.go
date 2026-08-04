@@ -254,11 +254,9 @@ func dialSpire(ctx context.Context, cfg Config) (*grpc.ClientConn, error) {
 	var creds credentials.TransportCredentials
 	if cfg.AgentAddr != "" && cfg.CertFile == "" {
 		agentTarget := parseAgentAddr(cfg.AgentAddr)
-		// agentTarget = "\\\\.\\pipe\\spire-agent\\public\\api"
 		slog.Info("connecting to SPIRE Agent Workload API", "agentTarget", agentTarget)
 		x509Source, err := workloadapi.NewX509Source(ctx, workloadapi.WithClientOptions(
 			workloadapi.WithAddr(agentTarget),
-			// workloadapi.WithNamedPipeName(agentTarget),
 		))
 		if err != nil {
 			slog.Error("failed to acquire SPIFFE X509Source from SPIRE Agent", "error", err)

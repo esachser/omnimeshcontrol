@@ -177,14 +177,21 @@ try {
     # 5. Register omnimeshcontrol SPIFFE Identity in SPIRE Server
     # ---------------------------------------------------------------------------
     Write-Host "Registering omnimeshcontrol workload entry in SPIRE Server..." -ForegroundColor Yellow
+    $controlBinPath = Join-Path $ProjectRoot "bin\omnimeshcontrol.exe"
+    
+    # Remove old entry if present to ensure clean creation with -admin flag
+    & $SpireServerBin entry delete -spiffeID spiffe://omnimesh.local/ns/omnimesh-system/sa/omnimeshcontrol 2>&1 | Out-Null
+
     $entryOut = & $SpireServerBin entry create `
         -spiffeID spiffe://omnimesh.local/ns/omnimesh-system/sa/omnimeshcontrol `
         -parentID spiffe://omnimesh.local/agents/dev-agent `
-        -selector windows:path:C:\Users\eduar\repos\go-projects\omnimeshcontrol\bin\omnimeshcontrol.exe `
-        -selector unix:user:test ` 2>&1
+        -selector windows:process-name:omnimeshcontrol.exe `
+        -selector windows:path:$controlBinPath `
+        -selector unix:user:runner `
+        -admin 2>&1
 
     if ($LASTEXITCODE -eq 0 -or ($entryOut -join "") -match "already exists") {
-        Write-Host "Successfully registered omnimeshcontrol workload identity!" -ForegroundColor Green
+        Write-Host "Successfully registered omnimeshcontrol admin workload identity!" -ForegroundColor Green
     } else {
         Write-Warning "Registration of omnimeshcontrol identity reported: $entryOut"
     }

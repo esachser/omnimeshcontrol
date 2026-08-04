@@ -20,7 +20,14 @@ import (
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/etcddns"
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/etcdstore"
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/spire"
-	"github.com/esachser/omnimeshcontrol/internal/application"
+	"github.com/esachser/omnimeshcontrol/internal/application/authz"
+	"github.com/esachser/omnimeshcontrol/internal/application/health"
+	"github.com/esachser/omnimeshcontrol/internal/application/namespace"
+	"github.com/esachser/omnimeshcontrol/internal/application/node"
+	"github.com/esachser/omnimeshcontrol/internal/application/policy"
+	"github.com/esachser/omnimeshcontrol/internal/application/route"
+	"github.com/esachser/omnimeshcontrol/internal/application/scope"
+	"github.com/esachser/omnimeshcontrol/internal/application/service"
 	domainservice "github.com/esachser/omnimeshcontrol/internal/domain/service"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 	"google.golang.org/grpc"
@@ -60,20 +67,6 @@ func run(logger *slog.Logger) error {
 	spireClientKey := os.Getenv("OMNIMESH_SPIRE_CLIENT_KEY")
 
 	// --- Build etcd client config from environment ---
-	//
-	// Security env vars (all optional; defaults give a plain-text dev setup):
-	//   OMNIMESH_ETCD_ENDPOINTS      – comma-separated list (default http://localhost:2379)
-	//   OMNIMESH_ETCD_CA_CERT        – path to PEM CA certificate for server verification
-	//   OMNIMESH_ETCD_CERT           – path to PEM client certificate (mTLS)
-	//   OMNIMESH_ETCD_KEY            – path to PEM client private key  (mTLS)
-	//   OMNIMESH_ETCD_TLS            – "true" to force TLS without cert files
-	//   OMNIMESH_ETCD_INSECURE       – "true" to skip server cert verification (dev only)
-	//   OMNIMESH_ETCD_USERNAME       – etcd RBAC username
-	//   OMNIMESH_ETCD_PASSWORD       – etcd RBAC password
-	//   OMNIMESH_ETCD_KEEPALIVE      – keep-alive probe interval  (e.g. "10s")
-	//   OMNIMESH_ETCD_KEEPALIVE_TO   – keep-alive timeout         (e.g. "5s")
-	//   OMNIMESH_ETCD_AUTOSYNC       – endpoint auto-sync interval (e.g. "30s")
-	//   OMNIMESH_ETCD_DIAL_TIMEOUT   – dial timeout               (default 5s)
 	etcdCfg := etcdstore.EtcdClientConfig{
 		Endpoints:          strings.Split(envOrDefault("OMNIMESH_ETCD_ENDPOINTS", "http://localhost:2379"), ","),
 		DialTimeout:        mustParseDuration("OMNIMESH_ETCD_DIAL_TIMEOUT", 5*time.Second),
@@ -112,7 +105,7 @@ func run(logger *slog.Logger) error {
 	}
 	defer stateStore.Close()
 
-	targetApp := application.NewTargetAppService(resourceStore, logger)
+	targetApp := route.NewTargetAppService(resourceStore, logger)
 
 	dnsManager := etcddns.NewEtcdDNSRecordManager(etcdClient, dnsZone)
 	routeDistributor := etcdstore.NewEtcdRouteDistributor(stateStore, targetApp, logger.WithGroup("route_dist"))
@@ -127,7 +120,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	// --- Wire application services ---
-	nsApp := application.NewNamespaceAppService(resourceStore, defaultCIDR, logger)
+	nsApp := namespace.NewNamespaceAppService(resourceStore, defaultCIDR, logger)
 
 	// --- Initialize SPIRE Identity Manager if enabled ---
 	var identityManager outbound.IdentityManager
@@ -151,7 +144,7 @@ func run(logger *slog.Logger) error {
 		logger.Info("SPIRE identity manager is disabled")
 	}
 
-	svcApp := application.NewServiceAppService(application.ServiceAppServiceConfig{
+	svcApp := service.NewServiceAppService(service.ServiceAppServiceConfig{
 		Resources:  resourceStore,
 		State:      stateStore,
 		DNS:        dnsManager,
@@ -161,27 +154,25 @@ func run(logger *slog.Logger) error {
 		Logger:     logger,
 	})
 
-	// NodeLivenessTracker backed by etcd leases — liveness, node state, and route
-	// keys are all attached to the same lease so etcd cleans them up atomically
-	// when the lease expires (grace period) or is revoked (graceful disconnect).
+	// NodeLivenessTracker backed by etcd leases
 	nodeTracker, err := etcdstore.NewNodeLivenessTracker(etcdClient, 30, logger)
 	if err != nil {
 		return fmt.Errorf("create node tracker: %w", err)
 	}
 	defer nodeTracker.Close()
 
-	routeApp := application.NewRouteAppService(resourceStore, stateStore, targetApp, logger)
-	nodeApp := application.NewNodeAppService(stateStore, nodeTracker, routeApp, logger)
+	routeApp := route.NewRouteAppService(resourceStore, stateStore, targetApp, logger)
+	nodeApp := node.NewNodeAppService(stateStore, nodeTracker, routeApp, logger)
 
 	validator := domainservice.NewPolicyValidator()
-	policyApp := application.NewTrafficPolicyAppService(policyStore, resourceStore, validator, logger)
+	policyApp := policy.NewTrafficPolicyAppService(policyStore, resourceStore, validator, logger)
 
-	healthApp := application.NewHealthAppService(healthStore, nodeTracker, logger)
+	healthApp := health.NewHealthAppService(healthStore, nodeTracker, logger)
 
 	authzEvaluator := domainservice.NewAuthzEvaluator()
-	authzApp := application.NewAuthzAppService(resourceStore, depStore, authzEvaluator, logger)
+	authzApp := authz.NewAuthzAppService(resourceStore, depStore, authzEvaluator, logger)
 
-	scopeApp := application.NewAgentScopeAppService(
+	scopeApp := scope.NewAgentScopeAppService(
 		resourceStore,
 		stateStore,
 		policyStore,
@@ -207,7 +198,7 @@ func run(logger *slog.Logger) error {
 	routeApp.SetNodeTracker(nodeTracker)
 	routeDistributor.SetScopeDistributor(agentServer)
 
-	nodeUpdates := application.NewNodeUpdateService(stateStore, agentServer, logger.WithGroup("node_updates"))
+	nodeUpdates := node.NewNodeUpdateService(stateStore, agentServer, logger.WithGroup("node_updates"))
 	routeDistributor.SetNodeDrainChecker(nodeUpdates)
 
 	go func() {
@@ -216,28 +207,28 @@ func run(logger *slog.Logger) error {
 		}
 	}()
 
-	policyUpdates := application.NewTrafficPolicyUpdateService(policyStore, agentServer, logger.WithGroup("policy_updates"))
+	policyUpdates := policy.NewTrafficPolicyUpdateService(policyStore, agentServer, logger.WithGroup("policy_updates"))
 	go func() {
 		if err := policyUpdates.Run(ctx); err != nil {
 			logger.Warn("traffic policy updates stopped", "error", err)
 		}
 	}()
 
-	serviceUpdates := application.NewServiceUpdateService(resourceStore, stateStore, agentServer, logger.WithGroup("service_updates"))
+	serviceUpdates := service.NewServiceUpdateService(resourceStore, stateStore, agentServer, logger.WithGroup("service_updates"))
 	go func() {
 		if err := serviceUpdates.Run(ctx); err != nil {
 			logger.Warn("service updates stopped", "error", err)
 		}
 	}()
 
-	healthUpdates := application.NewHealthUpdateService(healthStore, agentServer, logger.WithGroup("health_updates"))
+	healthUpdates := health.NewHealthUpdateService(healthStore, agentServer, logger.WithGroup("health_updates"))
 	go func() {
 		if err := healthUpdates.Run(ctx); err != nil {
 			logger.Warn("health updates stopped", "error", err)
 		}
 	}()
 
-	authzUpdates := application.NewAuthzPolicyUpdateService(resourceStore, agentServer, logger.WithGroup("authz_updates"))
+	authzUpdates := authz.NewAuthzPolicyUpdateService(resourceStore, agentServer, logger.WithGroup("authz_updates"))
 	go func() {
 		if err := authzUpdates.Run(ctx); err != nil {
 			logger.Warn("authz policy updates stopped", "error", err)

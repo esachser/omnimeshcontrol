@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/esachser/omnimeshcontrol/internal/application"
+	"github.com/esachser/omnimeshcontrol/internal/application/route"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 )
 
@@ -42,7 +42,7 @@ func TestEtcdRouteDistributor_AnnounceAndAllRoutes(t *testing.T) {
 
 	stateStore, _ := NewEtcdStateStore(client)
 	resourceStore := NewEtcdResourceStore(client)
-	targetApp := application.NewTargetAppService(resourceStore, nil)
+	targetApp := route.NewTargetAppService(resourceStore, nil)
 	dist := NewEtcdRouteDistributor(stateStore, targetApp, nil)
 	dist.SetScopeDistributor(newMockScopeDistributor())
 
@@ -85,7 +85,7 @@ func TestEtcdRouteDistributor_WithdrawRoute(t *testing.T) {
 
 	stateStore, _ := NewEtcdStateStore(client)
 	resourceStore := NewEtcdResourceStore(client)
-	targetApp := application.NewTargetAppService(resourceStore, nil)
+	targetApp := route.NewTargetAppService(resourceStore, nil)
 	dist := NewEtcdRouteDistributor(stateStore, targetApp, nil)
 	dist.SetScopeDistributor(newMockScopeDistributor())
 
@@ -148,7 +148,7 @@ func TestEtcdRouteDistributor_SeedFromExistingEtcdData(t *testing.T) {
 	}
 
 	resourceStore := NewEtcdResourceStore(client)
-	targetApp := application.NewTargetAppService(resourceStore, nil)
+	targetApp := route.NewTargetAppService(resourceStore, nil)
 	dist := NewEtcdRouteDistributor(stateStore, targetApp, nil)
 	dist.SetScopeDistributor(newMockScopeDistributor())
 

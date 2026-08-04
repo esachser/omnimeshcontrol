@@ -155,6 +155,7 @@ omnimeshcontrol/
 ├── configs/                # Default configuration files
 ├── rfcs/                   # Design documents and RFCs
 ├── scripts/                # Build, deploy, and utility scripts
+├── bin/                    # Builded binaries
 ├── go.mod
 └── go.sum
 ```

@@ -34,6 +34,7 @@ param(
     [string] $SpireAgentBin  = "spire-agent",
     [string] $CoreDNSBin     = "coredns",
     [string] $LogLevel       = "info",
+    [string] $LogDir         = "",
     [switch] $NoWait
 )
 
@@ -41,7 +42,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ---------------------------------------------------------------------------
-# Resolve script paths
+# Resolve script paths & logs folder
 # ---------------------------------------------------------------------------
 $EtcdScript        = Join-Path $PSScriptRoot "etcd-standalone.ps1"
 $SpireServerScript = Join-Path $PSScriptRoot "spire-server.ps1"
@@ -50,6 +51,13 @@ $CoreDNSScript     = Join-Path $PSScriptRoot "coredns.ps1"
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $ServerConfig = Join-Path $ProjectRoot "configs\spire-server.conf"
+
+if ([string]::IsNullOrWhiteSpace($LogDir)) {
+    $LogDir = Join-Path $ProjectRoot "logs"
+}
+if (-not (Test-Path $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+}
 
 # Verify all helper scripts exist
 foreach ($s in @($EtcdScript, $SpireServerScript, $SpireAgentScript, $CoreDNSScript)) {
@@ -67,6 +75,7 @@ Write-Host "  SPIRE Server : $SpireServerBin"
 Write-Host "  SPIRE Agent  : $SpireAgentBin"
 Write-Host "  CoreDNS Bin  : $CoreDNSBin"
 Write-Host "  Log Level    : $LogLevel"
+Write-Host "  Logs Folder  : $LogDir"
 Write-Host "======================================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -77,10 +86,11 @@ try {
     # 1. Start etcd
     # ---------------------------------------------------------------------------
     Write-Host "Starting etcd (standalone)..." -ForegroundColor Yellow
+    $etcdLogFile = Join-Path $LogDir "etcd.log"
     $etcdJob = Start-Job -Name "etcd" -ScriptBlock {
-        param($script, $bin, $logLevel)
-        & $script -EtcdBin $bin -LogLevel $logLevel
-    } -ArgumentList $EtcdScript, $EtcdBin, $LogLevel
+        param($script, $bin, $logLevel, $logFile)
+        & $script -EtcdBin $bin -LogLevel $logLevel *>&1 | Tee-Object -FilePath $logFile
+    } -ArgumentList $EtcdScript, $EtcdBin, $LogLevel, $etcdLogFile
     $Jobs += $etcdJob
 
     # Wait a moment for etcd to start listening
@@ -90,10 +100,11 @@ try {
     # 2. Start SPIRE Server
     # ---------------------------------------------------------------------------
     Write-Host "Starting SPIRE Server..." -ForegroundColor Yellow
+    $spireServerLogFile = Join-Path $LogDir "spire-server.log"
     $spireServerJob = Start-Job -Name "spire-server" -ScriptBlock {
-        param($script, $bin, $logLevel)
-        & $script -SpireServerBin $bin -LogLevel $logLevel
-    } -ArgumentList $SpireServerScript, $SpireServerBin, $LogLevel
+        param($script, $bin, $logLevel, $logFile)
+        & $script -SpireServerBin $bin -LogLevel $logLevel *>&1 | Tee-Object -FilePath $logFile
+    } -ArgumentList $SpireServerScript, $SpireServerBin, $LogLevel, $spireServerLogFile
     $Jobs += $spireServerJob
 
     # Wait for SPIRE Server to be ready/healthy
@@ -138,20 +149,55 @@ try {
     # 4. Start SPIRE Agent
     # ---------------------------------------------------------------------------
     Write-Host "Starting SPIRE Agent..." -ForegroundColor Yellow
+    $spireAgentLogFile = Join-Path $LogDir "spire-agent.log"
     $spireAgentJob = Start-Job -Name "spire-agent" -ScriptBlock {
-        param($script, $bin, $token, $logLevel)
-        & $script -SpireAgentBin $bin -JoinToken $token -LogLevel $logLevel
-    } -ArgumentList $SpireAgentScript, $SpireAgentBin, $token, $LogLevel
+        param($script, $bin, $token, $logLevel, $logFile)
+        & $script -SpireAgentBin $bin -JoinToken $token -LogLevel $logLevel *>&1 | Tee-Object -FilePath $logFile
+    } -ArgumentList $SpireAgentScript, $SpireAgentBin, $token, $LogLevel, $spireAgentLogFile
     $Jobs += $spireAgentJob
 
+    # Wait for SPIRE Agent to become healthy
+    Write-Host "Waiting for SPIRE Agent to become healthy..." -ForegroundColor Yellow
+    $agentHealthy = $false
+    for ($i = 0; $i -lt 15; $i++) {
+        Start-Sleep -Seconds 1
+        $agentHealth = & $SpireAgentBin healthcheck 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $agentHealthy = $true
+            break
+        }
+    }
+    if (-not $agentHealthy) {
+        Write-Warning "SPIRE Agent healthcheck did not report healthy. Proceeding anyway..."
+    } else {
+        Write-Host "SPIRE Agent is healthy!" -ForegroundColor Green
+    }
+
     # ---------------------------------------------------------------------------
-    # 5. Start CoreDNS
+    # 5. Register omnimeshcontrol SPIFFE Identity in SPIRE Server
+    # ---------------------------------------------------------------------------
+    Write-Host "Registering omnimeshcontrol workload entry in SPIRE Server..." -ForegroundColor Yellow
+    $entryOut = & $SpireServerBin entry create `
+        -spiffeID spiffe://omnimesh.local/ns/omnimesh-system/sa/omnimeshcontrol `
+        -parentID spiffe://omnimesh.local/agents/dev-agent `
+        -selector windows:path:C:\Users\eduar\repos\go-projects\omnimeshcontrol\bin\omnimeshcontrol.exe `
+        -selector unix:user:test ` 2>&1
+
+    if ($LASTEXITCODE -eq 0 -or ($entryOut -join "") -match "already exists") {
+        Write-Host "Successfully registered omnimeshcontrol workload identity!" -ForegroundColor Green
+    } else {
+        Write-Warning "Registration of omnimeshcontrol identity reported: $entryOut"
+    }
+
+    # ---------------------------------------------------------------------------
+    # 6. Start CoreDNS
     # ---------------------------------------------------------------------------
     Write-Host "Starting CoreDNS..." -ForegroundColor Yellow
+    $coreDNSLogFile = Join-Path $LogDir "coredns.log"
     $corednsJob = Start-Job -Name "coredns" -ScriptBlock {
-        param($script, $bin)
-        & $script -CoreDNSBin $bin
-    } -ArgumentList $CoreDNSScript, $CoreDNSBin
+        param($script, $bin, $logFile)
+        & $script -CoreDNSBin $bin *>&1 | Tee-Object -FilePath $logFile
+    } -ArgumentList $CoreDNSScript, $CoreDNSBin, $coreDNSLogFile
     $Jobs += $corednsJob
 
     if ($NoWait) {

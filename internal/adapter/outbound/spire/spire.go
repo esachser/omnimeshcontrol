@@ -16,6 +16,8 @@ import (
 	"github.com/Microsoft/go-winio"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
+	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	entryv1 "github.com/spiffe/spire-api-sdk/proto/spire/api/server/entry/v1"
 	spiretypes "github.com/spiffe/spire-api-sdk/proto/spire/api/types"
 	"google.golang.org/grpc"
@@ -29,6 +31,8 @@ type Config struct {
 	// ServerAddr is the SPIRE Server API endpoint connection string.
 	// Can be unix://..., npipe://..., \\..., tcp://..., or a raw TCP address.
 	ServerAddr string
+	// AgentAddr is the SPIRE Agent Workload API address for obtaining workload SVID.
+	AgentAddr string
 	// TrustDomain is the SPIRE trust domain (e.g. "omnimesh.local").
 	TrustDomain string
 	// ParentIDs is a list of parent agent SPIFFE IDs that are authorized to fetch workload SVIDs.
@@ -248,7 +252,23 @@ func dialSpire(ctx context.Context, cfg Config) (*grpc.ClientConn, error) {
 	}
 
 	var creds credentials.TransportCredentials
-	if cfg.CACertFile != "" || cfg.CertFile != "" {
+	if cfg.AgentAddr != "" && cfg.CertFile == "" {
+		agentTarget := parseAgentAddr(cfg.AgentAddr)
+		// agentTarget = "\\\\.\\pipe\\spire-agent\\public\\api"
+		slog.Info("connecting to SPIRE Agent Workload API", "agentTarget", agentTarget)
+		x509Source, err := workloadapi.NewX509Source(ctx, workloadapi.WithClientOptions(
+			workloadapi.WithAddr(agentTarget),
+			// workloadapi.WithNamedPipeName(agentTarget),
+		))
+		if err != nil {
+			slog.Error("failed to acquire SPIFFE X509Source from SPIRE Agent", "error", err)
+			return nil, fmt.Errorf("SPIRE Workload API X509Source failed: %w", err)
+		}
+		slog.Info("successfully acquired SPIFFE X509Source from SPIRE Agent", "agentTarget", agentTarget)
+		tlsCfg := tlsconfig.MTLSClientConfig(x509Source, x509Source, tlsconfig.AuthorizeAny())
+		tlsCfg.MinVersion = tls.VersionTLS12
+		creds = credentials.NewTLS(tlsCfg)
+	} else if cfg.CACertFile != "" || cfg.CertFile != "" {
 		tlsCfg := &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		}
@@ -283,6 +303,20 @@ func dialSpire(ctx context.Context, cfg Config) (*grpc.ClientConn, error) {
 	}
 
 	return grpc.NewClient(address, opts...)
+}
+
+func parseAgentAddr(raw string) string {
+	if strings.HasPrefix(raw, "unix://") {
+		return raw
+	}
+	raw = strings.TrimPrefix(raw, "npipe:")
+	if after, ok := strings.CutPrefix(raw, "npipe://"); ok {
+		raw = after
+	}
+	if strings.HasPrefix(raw, `\\.\pipe\`) {
+		raw = strings.TrimPrefix(raw, `\\.\pipe\`)
+	}
+	return "npipe:" + raw
 }
 
 // resolveSelectors processes selector templates and produces selectors for workload.

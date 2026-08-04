@@ -49,6 +49,12 @@ try {
     $ResolvedDataDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DataDir)
     $ResolvedConfig = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ConfigPath)
 
+    # If a Join Token is provided, remove stale keys/bundle so agent performs fresh attestation
+    if ($JoinToken -and (Test-Path $ResolvedDataDir)) {
+        Write-Host "Join token provided. Cleaning stale agent data in $ResolvedDataDir..." -ForegroundColor Yellow
+        Remove-Item "$ResolvedDataDir\*" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     # Ensure data directory exists
     if (-not (Test-Path $ResolvedDataDir)) {
         New-Item -ItemType Directory -Path $ResolvedDataDir -Force | Out-Null

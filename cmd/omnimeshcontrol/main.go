@@ -54,17 +54,19 @@ func run(logger *slog.Logger) error {
 
 	// --- SPIRE Configuration ---
 	spireEnabled := envOrDefault("OMNIMESH_SPIRE_ENABLED", "false") == "true"
-	defaultSpireAddr := "\\spire-server\\private\\api"
+	defaultSpireServerAddr := "127.0.0.1:8081"
+	defaultSpireAgentAddr := "\\spire-agent\\public\\api"
 	if os.PathSeparator == '/' {
-		defaultSpireAddr = "unix:///tmp/spire-server/private/api.sock"
+		defaultSpireAgentAddr = "unix:///tmp/spire-agent/public/api.sock"
 	}
-	spireServerAddr := envOrDefault("OMNIMESH_SPIRE_SERVER_ADDR", defaultSpireAddr)
+	spireServerAddr := envOrDefault("OMNIMESH_SPIRE_SERVER_ADDR", defaultSpireServerAddr)
+	spireAgentAddr := envOrDefault("OMNIMESH_SPIRE_AGENT_ADDR", defaultSpireAgentAddr)
 	spireTrustDomain := envOrDefault("OMNIMESH_SPIRE_TRUST_DOMAIN", dnsZone)
 	spireParentIDs := strings.Split(envOrDefault("OMNIMESH_SPIRE_PARENT_IDS", "spiffe://omnimesh.local/agents/dev-agent"), ",")
 	spireSelectors := strings.Split(envOrDefault("OMNIMESH_SPIRE_SELECTORS", "windows:process-name:{{.Name}}.exe,unix:user:{{.Name}}"), ",")
 	spireCACert := os.Getenv("OMNIMESH_SPIRE_CA_CERT")
-	spireClientCert := os.Getenv("OMNIMESH_SPIRE_CLIENT_CERT")
-	spireClientKey := os.Getenv("OMNIMESH_SPIRE_CLIENT_KEY")
+	spireClientCert := os.Getenv("OMNIMESH_SPIRE_CERT")
+	spireClientKey := os.Getenv("OMNIMESH_SPIRE_KEY")
 
 	// --- Build etcd client config from environment ---
 	etcdCfg := etcdstore.EtcdClientConfig{
@@ -127,13 +129,14 @@ func run(logger *slog.Logger) error {
 	if spireEnabled {
 		logger.Info("initializing SPIRE identity manager...")
 		spireMgr, err := spire.NewIdentityManager(spire.Config{
-			ServerAddr:   spireServerAddr,
-			TrustDomain:  spireTrustDomain,
-			ParentIDs:    spireParentIDs,
-			Selectors:    spireSelectors,
-			CACertFile:   spireCACert,
-			CertFile:     spireClientCert,
-			KeyFile:      spireClientKey,
+			ServerAddr:  spireServerAddr,
+			AgentAddr:   spireAgentAddr,
+			TrustDomain: spireTrustDomain,
+			ParentIDs:   spireParentIDs,
+			Selectors:   spireSelectors,
+			CACertFile:  spireCACert,
+			CertFile:    spireClientCert,
+			KeyFile:     spireClientKey,
 		}, logger.WithGroup("spire"))
 		if err != nil {
 			return fmt.Errorf("failed to initialize SPIRE identity manager: %w", err)

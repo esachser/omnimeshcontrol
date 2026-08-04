@@ -113,26 +113,63 @@ try {
     # ---------------------------------------------------------------------------
     # 2. Launch omnimeshcontrol.exe
     # ---------------------------------------------------------------------------
+    $LogDir = Join-Path $ProjectRoot "logs"
+    if (-not (Test-Path $LogDir)) {
+        New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+    }
+    $ommLogFile = Join-Path $LogDir "omnimeshcontrol.log"
+
     Write-Host "Starting omnimeshcontrol.exe..." -ForegroundColor Yellow
     $ommJob = Start-Job -Name "omnimeshcontrol" -ScriptBlock {
-        param($bin, $projectRoot, $spireEnabled)
+        param($bin, $projectRoot, $spireEnabled, $logFile)
         Set-Location $projectRoot
         $env:OMNIMESH_SPIRE_ENABLED = if ($spireEnabled) { "true" } else { "false" }
-        & $bin
-    } -ArgumentList $ControlBinPath, $ProjectRoot, $SpireEnabled
+        $env:OMNIMESH_SPIRE_SERVER_ADDR = "127.0.0.1:8081"
+        $env:OMNIMESH_SPIRE_AGENT_ADDR = "\\spire-agent\public\api"
+        & $bin *>&1 | Tee-Object -FilePath $logFile
+    } -ArgumentList $ControlBinPath, $ProjectRoot, $SpireEnabled, $ommLogFile
 
     $AllJobs += $ommJob
 
     # ---------------------------------------------------------------------------
-    # Status Summary
+    # Status Summary & Live Log Streaming
     # ---------------------------------------------------------------------------
     Write-Host ""
     Write-Host "All Omnimesh dev components & Control Plane started!" -ForegroundColor Green
     Write-Host "Active Jobs:"
     Get-Job | Format-Table -Property Name, State, HasMoreData
-    Write-Host ""
-    Write-Host "Press ENTER to stop all services cleanly (infrastructure + omnimeshcontrol)." -ForegroundColor Yellow
-    $null = Read-Host
+    Write-Host "Streaming omnimeshcontrol logs below (stdout/stderr)." -ForegroundColor Cyan
+    Write-Host "Press ENTER or Ctrl+C to stop all services cleanly." -ForegroundColor Yellow
+    Write-Host "----------------------------------------------------------------------" -ForegroundColor Gray
+
+    while ($true) {
+        try {
+            if ([System.Console]::KeyAvailable) {
+                $key = [System.Console]::ReadKey($true)
+                if ($key.Key -eq [System.ConsoleKey]::Enter) {
+                    break
+                }
+            }
+        } catch {
+            # Non-interactive console host fallback
+        }
+
+        $logs = Receive-Job -Job $ommJob -ErrorAction SilentlyContinue
+        if ($logs) {
+            $logs | Out-Host
+        }
+
+        if ($ommJob.State -eq 'Failed' -or $ommJob.State -eq 'Stopped') {
+            Write-Warning "omnimeshcontrol job stopped with state: $($ommJob.State)"
+            $remaining = Receive-Job -Job $ommJob -ErrorAction SilentlyContinue
+            if ($remaining) {
+                $remaining | Out-Host
+            }
+            break
+        }
+
+        Start-Sleep -Milliseconds 200
+    }
 
 }
 finally {

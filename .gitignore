@@ -8,8 +8,11 @@ bin/
 
 # etcd data directory
 data/
+logs/
 
 .claude/
+
+.env*
 
 # Test binary, built with `go test -c`
 *.test

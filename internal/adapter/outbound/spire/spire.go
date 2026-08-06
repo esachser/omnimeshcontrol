@@ -308,11 +308,8 @@ func parseAgentAddr(raw string) string {
 		return raw
 	}
 	raw = strings.TrimPrefix(raw, "npipe:")
-	if after, ok := strings.CutPrefix(raw, "npipe://"); ok {
+	if after, ok := strings.CutPrefix(raw, `\\.\pipe\`); ok {
 		raw = after
-	}
-	if strings.HasPrefix(raw, `\\.\pipe\`) {
-		raw = strings.TrimPrefix(raw, `\\.\pipe\`)
 	}
 	return "npipe:" + raw
 }

@@ -125,23 +125,29 @@ try {
     }
 
     # ---------------------------------------------------------------------------
-    # 3. Generate Agent Join Token
+    # 3. Generate Agent Join Token (if not already joined)
     # ---------------------------------------------------------------------------
-    Write-Host "Generating SPIRE Agent join token..." -ForegroundColor Yellow
-    $tokenOutput = & $SpireServerBin token generate -spiffeID spiffe://omnimesh.local/agents/dev-agent 2>&1
-    
+    $SpireAgentKeyFile = Join-Path $ProjectRoot "data\spire-agent\keys.json"
     $token = ""
-    if ($tokenOutput -match "Token:\s*(.+)") {
-        $token = $Matches[1].Trim()
-        Write-Host "Successfully generated agent join token: $token" -ForegroundColor Green
+
+    if (Test-Path $SpireAgentKeyFile) {
+        Write-Host "SPIRE Agent is already joined (found $SpireAgentKeyFile). Starting normal execution..." -ForegroundColor Green
     } else {
-        # Try to parse raw string if it is just outputted directly
-        $token = ($tokenOutput -join "").Trim()
-        if ($token -notmatch "failed" -and $token -notmatch "error" -and $token.Length -gt 5) {
-            Write-Host "Extracted agent join token: $token" -ForegroundColor Green
+        Write-Host "Generating SPIRE Agent join token..." -ForegroundColor Yellow
+        $tokenOutput = & $SpireServerBin token generate -spiffeID spiffe://omnimesh.local/agents/dev-agent 2>&1
+        
+        if ($tokenOutput -match "Token:\s*(.+)") {
+            $token = $Matches[1].Trim()
+            Write-Host "Successfully generated agent join token: $token" -ForegroundColor Green
         } else {
-            Write-Error "Failed to generate SPIRE Agent join token. Output: $tokenOutput"
-            exit 1
+            # Try to parse raw string if it is just outputted directly
+            $token = ($tokenOutput -join "").Trim()
+            if ($token -notmatch "failed" -and $token -notmatch "error" -and $token.Length -gt 5) {
+                Write-Host "Extracted agent join token: $token" -ForegroundColor Green
+            } else {
+                Write-Error "Failed to generate SPIRE Agent join token. Output: $tokenOutput"
+                exit 1
+            }
         }
     }
 

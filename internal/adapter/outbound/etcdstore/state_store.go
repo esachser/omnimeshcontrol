@@ -18,8 +18,8 @@ import (
 const (
 	statePrefix      = "/omnimesh/state/"
 	ipAllocPrefix    = statePrefix + "ip-alloc/"
-	ipNextKey        = statePrefix + "ip-next" // 4 bytes: next IP to allocate
-	ipFreeKey        = statePrefix + "ip-free" // JSON array of freed IPs (for reuse)
+	ipNextPrefix     = statePrefix + "ip-next/" // /omnimesh/state/ip-next/<namespace>
+	ipFreePrefix     = statePrefix + "ip-free/" // /omnimesh/state/ip-free/<namespace>
 	nodePrefix       = statePrefix + "nodes/"
 	routePrefix      = statePrefix + "routes/"
 	leaderElectionPf = "/omnimesh/leader/"
@@ -64,17 +64,29 @@ func (s *EtcdStateStore) Resign(ctx context.Context) error {
 	return s.election.Resign(ctx)
 }
 
-// AllocateIP atomically allocates a mesh IP for a service.
+// AllocateIP atomically allocates a mesh IP for a service from its namespace's CIDR.
 //
 // Strategy (O(1) with distributed safety):
 //  1. Check if this service already has an allocation → ErrIPConflict.
-//  2. Try to pop an IP from the free list (reuse freed IPs).
-//  3. If free list is empty, increment the counter at /omnimesh/state/ip-next via CAS.
+//  2. Try to pop an IP from the namespace free list (reuse freed IPs in namespace).
+//  3. If free list is empty, increment the counter at /omnimesh/state/ip-next/<namespace> via CAS.
 //  4. Write the service→IP mapping atomically (only if key doesn't exist yet).
 //
 // All writes use etcd Txn for distributed lock-free safety.
 func (s *EtcdStateStore) AllocateIP(ctx context.Context, id model.ServiceID, cidr netip.Prefix) (netip.Addr, error) {
+	if id.Namespace == "" {
+		return netip.Addr{}, fmt.Errorf("state store: allocate IP: %w", domain.ErrInvalidNamespace)
+	}
+	if id.Name == "" {
+		return netip.Addr{}, fmt.Errorf("state store: allocate IP: %w", domain.ErrInvalidName)
+	}
+	if !cidr.IsValid() {
+		return netip.Addr{}, fmt.Errorf("state store: allocate IP: %w", domain.ErrInvalidCIDR)
+	}
+
 	allocKey := ipAllocPrefix + id.String()
+	nsNextKey := ipNextPrefix + id.Namespace
+	nsFreeKey := ipFreePrefix + id.Namespace
 
 	// Step 1: Check if already allocated.
 	resp, err := s.client.Get(ctx, allocKey)
@@ -85,15 +97,15 @@ func (s *EtcdStateStore) AllocateIP(ctx context.Context, id model.ServiceID, cid
 		return netip.Addr{}, fmt.Errorf("state store: allocate IP for %q: %w", id, domain.ErrIPConflict)
 	}
 
-	// Step 2: Try to pop from free list first (reuse deleted IPs).
-	addr, fromFree, err := s.popFreeIP(ctx)
+	// Step 2: Try to pop from namespace free list first (reuse deleted IPs).
+	addr, fromFree, err := s.popFreeIP(ctx, nsFreeKey, cidr)
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("state store: pop free IP: %w", err)
 	}
 
-	// Step 3: If no free IP available, allocate from counter.
+	// Step 3: If no free IP available, allocate from namespace counter.
 	if !fromFree {
-		addr, err = s.allocateFromCounter(ctx, cidr)
+		addr, err = s.allocateFromCounter(ctx, nsNextKey, cidr)
 		if err != nil {
 			return netip.Addr{}, err
 		}
@@ -110,32 +122,32 @@ func (s *EtcdStateStore) AllocateIP(ctx context.Context, id model.ServiceID, cid
 	}
 	if !txnResp.Succeeded {
 		// Another instance allocated for this service concurrently — return the freed IP.
-		s.pushFreeIP(ctx, addr)
+		s.pushFreeIP(ctx, nsFreeKey, addr)
 		return netip.Addr{}, fmt.Errorf("state store: allocate IP for %q: %w", id, domain.ErrIPConflict)
 	}
 
 	return addr, nil
 }
 
-// allocateFromCounter atomically increments the IP counter via CAS and returns the next IP.
-func (s *EtcdStateStore) allocateFromCounter(ctx context.Context, cidr netip.Prefix) (netip.Addr, error) {
+// allocateFromCounter atomically increments the per-namespace IP counter via CAS and returns the next IP.
+func (s *EtcdStateStore) allocateFromCounter(ctx context.Context, nsNextKey string, cidr netip.Prefix) (netip.Addr, error) {
 	for {
-		resp, err := s.client.Get(ctx, ipNextKey)
+		resp, err := s.client.Get(ctx, nsNextKey)
 		if err != nil {
-			return netip.Addr{}, fmt.Errorf("state store: get ip-next: %w", err)
+			return netip.Addr{}, fmt.Errorf("state store: get ip-next %q: %w", nsNextKey, err)
 		}
 
 		var nextAddr netip.Addr
 		var currentRev int64
 
 		if len(resp.Kvs) == 0 {
-			// First allocation ever: start from network address + 1.
+			// First allocation for this namespace: start from network address + 1.
 			nextAddr = cidr.Addr().Next()
 			currentRev = 0
 		} else {
 			val := resp.Kvs[0].Value
 			if len(val) != 4 {
-				return netip.Addr{}, fmt.Errorf("state store: invalid ip-next data (len=%d)", len(val))
+				return netip.Addr{}, fmt.Errorf("state store: invalid ip-next data for %q (len=%d)", nsNextKey, len(val))
 			}
 			nextAddr = netip.AddrFrom4([4]byte(val))
 			currentRev = resp.Kvs[0].ModRevision
@@ -151,17 +163,17 @@ func (s *EtcdStateStore) allocateFromCounter(ctx context.Context, cidr netip.Pre
 
 		var cmp clientv3.Cmp
 		if currentRev == 0 {
-			cmp = clientv3.Compare(clientv3.CreateRevision(ipNextKey), "=", 0)
+			cmp = clientv3.Compare(clientv3.CreateRevision(nsNextKey), "=", 0)
 		} else {
-			cmp = clientv3.Compare(clientv3.ModRevision(ipNextKey), "=", currentRev)
+			cmp = clientv3.Compare(clientv3.ModRevision(nsNextKey), "=", currentRev)
 		}
 
 		txnResp, err := s.client.Txn(ctx).
 			If(cmp).
-			Then(clientv3.OpPut(ipNextKey, string(succBytes[:]))).
+			Then(clientv3.OpPut(nsNextKey, string(succBytes[:]))).
 			Commit()
 		if err != nil {
-			return netip.Addr{}, fmt.Errorf("state store: txn ip-next: %w", err)
+			return netip.Addr{}, fmt.Errorf("state store: txn ip-next %q: %w", nsNextKey, err)
 		}
 		if txnResp.Succeeded {
 			return nextAddr, nil
@@ -217,43 +229,57 @@ func popFirstIP(data []byte) (netip.Addr, []byte, bool) {
 	}
 }
 
-// popFreeIP atomically pops the first IP from the binary free list via CAS.
+// popFreeIP atomically pops the first IP from the namespace binary free list via CAS.
 // Returns (addr, true, nil) if an IP was popped, or (Addr{}, false, nil) if the list is empty.
-func (s *EtcdStateStore) popFreeIP(ctx context.Context) (netip.Addr, bool, error) {
-	resp, err := s.client.Get(ctx, ipFreeKey)
-	if err != nil {
-		return netip.Addr{}, false, err
-	}
-	if len(resp.Kvs) == 0 || len(resp.Kvs[0].Value) == 0 {
-		return netip.Addr{}, false, nil
-	}
+func (s *EtcdStateStore) popFreeIP(ctx context.Context, nsFreeKey string, cidr netip.Prefix) (netip.Addr, bool, error) {
+	for {
+		resp, err := s.client.Get(ctx, nsFreeKey)
+		if err != nil {
+			return netip.Addr{}, false, err
+		}
+		if len(resp.Kvs) == 0 || len(resp.Kvs[0].Value) == 0 {
+			return netip.Addr{}, false, nil
+		}
 
-	addr, remaining, ok := popFirstIP(resp.Kvs[0].Value)
-	if !ok {
-		return netip.Addr{}, false, nil
-	}
+		addr, remaining, ok := popFirstIP(resp.Kvs[0].Value)
+		if !ok {
+			return netip.Addr{}, false, nil
+		}
 
-	// CAS: only update if revision hasn't changed.
-	txnResp, err := s.client.Txn(ctx).
-		If(clientv3.Compare(clientv3.ModRevision(ipFreeKey), "=", resp.Kvs[0].ModRevision)).
-		Then(clientv3.OpPut(ipFreeKey, string(remaining))).
-		Commit()
-	if err != nil {
-		return netip.Addr{}, false, err
-	}
-	if !txnResp.Succeeded {
-		return netip.Addr{}, false, nil
-	}
+		if !cidr.Contains(addr) {
+			// Discard out-of-CIDR IP from free list
+			txnResp, err := s.client.Txn(ctx).
+				If(clientv3.Compare(clientv3.ModRevision(nsFreeKey), "=", resp.Kvs[0].ModRevision)).
+				Then(clientv3.OpPut(nsFreeKey, string(remaining))).
+				Commit()
+			if err == nil && txnResp.Succeeded {
+				continue
+			}
+			continue
+		}
 
-	return addr, true, nil
+		// CAS: only update if revision hasn't changed.
+		txnResp, err := s.client.Txn(ctx).
+			If(clientv3.Compare(clientv3.ModRevision(nsFreeKey), "=", resp.Kvs[0].ModRevision)).
+			Then(clientv3.OpPut(nsFreeKey, string(remaining))).
+			Commit()
+		if err != nil {
+			return netip.Addr{}, false, err
+		}
+		if !txnResp.Succeeded {
+			continue
+		}
+
+		return addr, true, nil
+	}
 }
 
-// pushFreeIP atomically appends an IP to the binary free list via CAS.
-func (s *EtcdStateStore) pushFreeIP(ctx context.Context, addr netip.Addr) {
+// pushFreeIP atomically appends an IP to the namespace binary free list via CAS.
+func (s *EtcdStateStore) pushFreeIP(ctx context.Context, nsFreeKey string, addr netip.Addr) {
 	entry := marshalIP(addr)
 
 	for {
-		resp, err := s.client.Get(ctx, ipFreeKey)
+		resp, err := s.client.Get(ctx, nsFreeKey)
 		if err != nil {
 			return
 		}
@@ -271,14 +297,14 @@ func (s *EtcdStateStore) pushFreeIP(ctx context.Context, addr netip.Addr) {
 
 		var cmp clientv3.Cmp
 		if rev == 0 {
-			cmp = clientv3.Compare(clientv3.CreateRevision(ipFreeKey), "=", 0)
+			cmp = clientv3.Compare(clientv3.CreateRevision(nsFreeKey), "=", 0)
 		} else {
-			cmp = clientv3.Compare(clientv3.ModRevision(ipFreeKey), "=", rev)
+			cmp = clientv3.Compare(clientv3.ModRevision(nsFreeKey), "=", rev)
 		}
 
 		txnResp, err := s.client.Txn(ctx).
 			If(cmp).
-			Then(clientv3.OpPut(ipFreeKey, string(newData))).
+			Then(clientv3.OpPut(nsFreeKey, string(newData))).
 			Commit()
 		if err != nil {
 			return
@@ -290,9 +316,17 @@ func (s *EtcdStateStore) pushFreeIP(ctx context.Context, addr netip.Addr) {
 	}
 }
 
-// ReleaseIP releases the mesh IP allocated to a service, pushing it onto the free list for reuse.
+// ReleaseIP releases the mesh IP allocated to a service, pushing it onto the namespace free list for reuse.
 func (s *EtcdStateStore) ReleaseIP(ctx context.Context, id model.ServiceID) error {
+	if id.Namespace == "" {
+		return fmt.Errorf("state store: release IP: %w", domain.ErrInvalidNamespace)
+	}
+	if id.Name == "" {
+		return fmt.Errorf("state store: release IP: %w", domain.ErrInvalidName)
+	}
+
 	allocKey := ipAllocPrefix + id.String()
+	nsFreeKey := ipFreePrefix + id.Namespace
 
 	// Read the allocated IP first so we can push it to the free list.
 	resp, err := s.client.Get(ctx, allocKey)
@@ -322,11 +356,8 @@ func (s *EtcdStateStore) ReleaseIP(ctx context.Context, id model.ServiceID) erro
 		return fmt.Errorf("state store: release IP for %q: %w", id, domain.ErrServiceNotFound)
 	}
 
-	// Push the freed IP onto the free list for reuse.
-	if addr.IsValid() {
-		s.pushFreeIP(ctx, addr)
-	}
-
+	// Push the freed IP onto the namespace free list for reuse.
+	s.pushFreeIP(ctx, nsFreeKey, addr)
 	return nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	omnimeshv1 "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1"
+	"github.com/esachser/omnimeshcontrol/internal/application/mapper"
 	"github.com/esachser/omnimeshcontrol/internal/codec"
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
@@ -122,9 +123,20 @@ func (s *ControlPlaneServer) applyNamespace(ctx context.Context, r *omnimeshv1.R
 		return nil, status.Error(codes.InvalidArgument, "metadata is required")
 	}
 
-	ns := &model.Namespace{
-		Name:   r.Metadata.Name,
-		Labels: r.Metadata.Labels,
+	resource := &model.Resource{
+		APIVersion: r.ApiVersion,
+		Kind:       r.Kind,
+		Metadata: model.ResourceMetadata{
+			Name:      r.Metadata.Name,
+			Namespace: r.Metadata.Namespace,
+			Labels:    r.Metadata.Labels,
+		},
+		Spec: r.Spec,
+	}
+
+	ns, err := mapper.ResourceToNamespace(resource)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid namespace: %v", err)
 	}
 
 	if err := s.namespaces.Apply(ctx, ns); err != nil {
@@ -439,6 +451,9 @@ func serviceToProto(svc *model.Service) *omnimeshv1.Resource {
 func namespaceToProto(ns *model.Namespace) *omnimeshv1.Resource {
 	spec := map[string]any{
 		"isolation": ns.Isolation.String(),
+	}
+	if ns.CIDR.IsValid() {
+		spec["cidr"] = ns.CIDR.String()
 	}
 	specJSON, _ := json.Marshal(spec)
 

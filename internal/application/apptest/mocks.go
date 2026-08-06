@@ -99,33 +99,45 @@ func (m *MockResourceStore) CompareAndPut(_ context.Context, key string, expecte
 // --- Mock StateStore ---
 
 type MockStateStore struct {
-	mu     sync.Mutex
-	IPs    map[string]netip.Addr
-	Nodes  map[string]*model.Node
-	nextIP netip.Addr
-	Routes map[string]*model.TargetRoute
+	mu      sync.Mutex
+	IPs     map[string]netip.Addr
+	Nodes   map[string]*model.Node
+	nextIP  netip.Addr
+	nextIPs map[string]netip.Addr
+	Routes  map[string]*model.TargetRoute
 }
 
 func NewMockStateStore() *MockStateStore {
 	return &MockStateStore{
-		IPs:    make(map[string]netip.Addr),
-		Nodes:  make(map[string]*model.Node),
-		nextIP: netip.MustParseAddr("100.64.0.1"),
-		Routes: make(map[string]*model.TargetRoute),
+		IPs:     make(map[string]netip.Addr),
+		Nodes:   make(map[string]*model.Node),
+		nextIP:  netip.MustParseAddr("100.64.0.1"),
+		nextIPs: make(map[string]netip.Addr),
+		Routes:  make(map[string]*model.TargetRoute),
 	}
 }
 
-func (m *MockStateStore) AllocateIP(_ context.Context, id model.ServiceID, _ netip.Prefix) (netip.Addr, error) {
+func (m *MockStateStore) AllocateIP(_ context.Context, id model.ServiceID, cidr netip.Prefix) (netip.Addr, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := id.String()
 	if _, ok := m.IPs[key]; ok {
 		return netip.Addr{}, domain.ErrIPConflict
 	}
-	addr := m.nextIP
-	m.IPs[key] = addr
-	m.nextIP = m.nextIP.Next()
-	return addr, nil
+	if m.nextIPs == nil {
+		m.nextIPs = make(map[string]netip.Addr)
+	}
+	next, ok := m.nextIPs[id.Namespace]
+	if !ok {
+		if cidr.IsValid() {
+			next = cidr.Addr().Next()
+		} else {
+			next = m.nextIP
+		}
+	}
+	m.IPs[key] = next
+	m.nextIPs[id.Namespace] = next.Next()
+	return next, nil
 }
 
 func (m *MockStateStore) ReleaseIP(_ context.Context, id model.ServiceID) error {

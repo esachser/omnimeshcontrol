@@ -16,6 +16,7 @@ import (
 	"github.com/Microsoft/go-winio"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	entryv1 "github.com/spiffe/spire-api-sdk/proto/spire/api/server/entry/v1"
@@ -312,6 +313,40 @@ func parseAgentAddr(raw string) string {
 		raw = after
 	}
 	return "npipe:" + raw
+}
+
+// NewX509Source creates a SPIFFE X509Source connected to the SPIRE Agent Workload API.
+func NewX509Source(ctx context.Context, agentAddr string) (*workloadapi.X509Source, error) {
+	agentTarget := parseAgentAddr(agentAddr)
+	source, err := workloadapi.NewX509Source(ctx, workloadapi.WithClientOptions(
+		workloadapi.WithAddr(agentTarget),
+	))
+	if err != nil {
+		return nil, fmt.Errorf("spire x509source: %w", err)
+	}
+	return source, nil
+}
+
+// NewServerCredentials creates gRPC server credentials configured for mTLS using SPIRE SVIDs.
+// It presents a server X.509 SVID fetched from SPIRE Agent and requires a valid client X.509 SVID
+// within the specified trust domain.
+func NewServerCredentials(ctx context.Context, agentAddr, trustDomain string) (credentials.TransportCredentials, *workloadapi.X509Source, error) {
+	source, err := NewX509Source(ctx, agentAddr)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	td, err := spiffeid.TrustDomainFromString(trustDomain)
+	if err != nil {
+		source.Close()
+		return nil, nil, fmt.Errorf("spire server creds: invalid trust domain %q: %w", trustDomain, err)
+	}
+
+	tlsCfg := tlsconfig.MTLSServerConfig(source, source, tlsconfig.AuthorizeMemberOf(td))
+	tlsCfg.MinVersion = tls.VersionTLS12
+	creds := credentials.NewTLS(tlsCfg)
+
+	return creds, source, nil
 }
 
 // resolveSelectors processes selector templates and produces selectors for workload.

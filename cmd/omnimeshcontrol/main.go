@@ -49,6 +49,7 @@ func run(logger *slog.Logger) error {
 
 	// --- Configuration (from env or defaults) ---
 	grpcAddr := envOrDefault("OMNIMESH_GRPC_ADDR", ":9090")
+	agentGrpcAddr := envOrDefault("OMNIMESH_AGENT_GRPC_ADDR", ":9091")
 	meshCIDR := envOrDefault("OMNIMESH_MESH_CIDR", "100.64.0.0/10")
 	dnsZone := envOrDefault("OMNIMESH_DNS_ZONE", "omnimesh.local")
 
@@ -187,13 +188,7 @@ func run(logger *slog.Logger) error {
 		logger.WithGroup("scope_app"),
 	)
 
-	// --- Start gRPC server ---
-	lis, err := net.Listen("tcp", grpcAddr)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", grpcAddr, err)
-	}
-
-	grpcServer := grpc.NewServer()
+	// --- gRPC Servers Setup ---
 	controlServer := grpcadapter.NewControlPlaneServer(svcApp, nsApp, targetApp, policyApp, authzApp, logger)
 	agentServer := grpcadapter.NewAgentServer(nodeApp, healthApp, scopeApp, routeApp, logger)
 
@@ -244,27 +239,81 @@ func run(logger *slog.Logger) error {
 		}
 	}()
 
-	omnimeshv1.RegisterControlPlaneServiceServer(grpcServer, controlServer)
-	omnimeshv1.RegisterAgentServiceServer(grpcServer, agentServer)
+	// 1. Control Plane Server (CLI / REST Gateway)
+	controlLis, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		return fmt.Errorf("listen control plane %s: %w", grpcAddr, err)
+	}
+	controlGrpcServer := grpc.NewServer()
+	omnimeshv1.RegisterControlPlaneServiceServer(controlGrpcServer, controlServer)
 
-	logger.Info("gRPC server starting", "addr", grpcAddr)
+	// 2. Agent Server (Sidecars / Proxies)
+	var agentGrpcServer *grpc.Server
+	if agentGrpcAddr == grpcAddr {
+		// Single listener mode: register AgentService on controlGrpcServer
+		omnimeshv1.RegisterAgentServiceServer(controlGrpcServer, agentServer)
+	} else {
+		var agentServerOpts []grpc.ServerOption
+		if spireEnabled {
+			logger.Info("configuring SPIRE mTLS for Agent gRPC server", "agentAddr", spireAgentAddr, "trustDomain", spireTrustDomain)
+			agentCreds, agentSource, err := spire.NewServerCredentials(ctx, spireAgentAddr, spireTrustDomain)
+			if err != nil {
+				return fmt.Errorf("failed to create SPIRE server credentials for agent server: %w", err)
+			}
+			defer agentSource.Close()
+			agentServerOpts = append(agentServerOpts, grpc.Creds(agentCreds))
+			logger.Info("SPIRE mTLS enabled for Agent gRPC server (requires server & client SVIDs)")
+		} else {
+			logger.Info("Agent gRPC server running without mTLS (SPIRE disabled)")
+		}
+
+		agentLis, err := net.Listen("tcp", agentGrpcAddr)
+		if err != nil {
+			return fmt.Errorf("listen agent server %s: %w", agentGrpcAddr, err)
+		}
+
+		agentGrpcServer = grpc.NewServer(agentServerOpts...)
+		omnimeshv1.RegisterAgentServiceServer(agentGrpcServer, agentServer)
+
+		go func() {
+			logger.Info("Agent gRPC server starting", "addr", agentGrpcAddr, "spireMTLS", spireEnabled)
+			if err := agentGrpcServer.Serve(agentLis); err != nil {
+				logger.Error("Agent gRPC server failed", "error", err)
+			}
+		}()
+	}
+
+	logger.Info("ControlPlane gRPC server starting", "addr", grpcAddr)
 
 	// Graceful shutdown.
 	go func() {
 		<-ctx.Done()
-		logger.Info("shutting down gRPC server...")
+		logger.Info("shutting down gRPC servers...")
 		ctxEnd, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+
+		done := make(chan struct{})
 		go func() {
-			grpcServer.GracefulStop()
+			controlGrpcServer.GracefulStop()
+			if agentGrpcServer != nil {
+				agentGrpcServer.GracefulStop()
+			}
+			close(done)
 		}()
-		<-ctxEnd.Done()
-		grpcServer.Stop()
-		logger.Info("gRPC server stopped")
+
+		select {
+		case <-done:
+		case <-ctxEnd.Done():
+			controlGrpcServer.Stop()
+			if agentGrpcServer != nil {
+				agentGrpcServer.Stop()
+			}
+		}
+		logger.Info("gRPC servers stopped")
 	}()
 
-	if err := grpcServer.Serve(lis); err != nil {
-		return fmt.Errorf("grpc serve: %w", err)
+	if err := controlGrpcServer.Serve(controlLis); err != nil {
+		return fmt.Errorf("control plane grpc serve: %w", err)
 	}
 
 	logger.Info("server stopped")

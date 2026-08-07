@@ -14,6 +14,8 @@ import (
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -69,8 +71,27 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 		return status.Error(codes.InvalidArgument, "first message must be RegisterNodeRequest")
 	}
 
+	// Extract SPIFFE SVID from mTLS peer certificates if present
+	var spiffeID string
+	if p, ok := peer.FromContext(ctx); ok {
+		if tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo); ok {
+			for _, cert := range tlsInfo.State.PeerCertificates {
+				for _, uri := range cert.URIs {
+					if uri.Scheme == "spiffe" {
+						spiffeID = uri.String()
+						break
+					}
+				}
+			}
+		}
+	}
+
 	nodeID := reg.NodeId
-	s.logger.Info("agent stream opened", "nodeID", nodeID, "addr", reg.Addr)
+	if spiffeID != "" {
+		s.logger.Info("agent stream opened with SPIFFE SVID", "nodeID", nodeID, "addr", reg.Addr, "spiffeID", spiffeID)
+	} else {
+		s.logger.Info("agent stream opened", "nodeID", nodeID, "addr", reg.Addr)
+	}
 
 	s.mu.Lock()
 	s.activeStreams[nodeID] = stream

@@ -82,8 +82,9 @@ func (s *ControlPlaneServer) applyService(ctx context.Context, r *omnimeshv1.Res
 
 	// Parse spec.
 	var spec struct {
-		Protocol string `json:"protocol"`
-		Port     int    `json:"port"`
+		Protocol  string   `json:"protocol"`
+		Port      int      `json:"port"`
+		Selectors []string `json:"selectors,omitempty"`
 	}
 	if len(r.Spec) > 0 {
 		if err := json.Unmarshal(r.Spec, &spec); err != nil {
@@ -96,8 +97,9 @@ func (s *ControlPlaneServer) applyService(ctx context.Context, r *omnimeshv1.Res
 			Namespace: r.Metadata.Namespace,
 			Name:      r.Metadata.Name,
 		},
-		Labels: r.Metadata.Labels,
-		Port:   spec.Port,
+		Labels:    r.Metadata.Labels,
+		Port:      spec.Port,
+		Selectors: spec.Selectors,
 	}
 
 	switch spec.Protocol {
@@ -430,6 +432,9 @@ func serviceToProto(svc *model.Service) *omnimeshv1.Resource {
 	spec := map[string]any{
 		"protocol": svc.Protocol.String(),
 		"port":     svc.Port,
+	}
+	if len(svc.Selectors) > 0 {
+		spec["selectors"] = svc.Selectors
 	}
 	if svc.MeshAddr.IsValid() {
 		spec["meshAddr"] = svc.MeshAddr.String()

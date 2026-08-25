@@ -105,6 +105,7 @@ message ServiceInfo {
   string protocol = 3;
   string mesh_addr = 4;
   int32 port = 5;
+  repeated string selectors = 6;
 }
 
 message RouteInfo {

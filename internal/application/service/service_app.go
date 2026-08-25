@@ -85,6 +85,7 @@ func (s *ServiceAppService) Apply(ctx context.Context, service *model.Service) e
 		identity := model.ServiceIdentity{
 			SPIFFEID:  spiffeID,
 			ServiceID: service.ID,
+			Selectors: service.Selectors,
 		}
 		if err := s.identity.RegisterWorkload(ctx, identity); err != nil {
 			return fmt.Errorf("service apply: register identity: %w", err)

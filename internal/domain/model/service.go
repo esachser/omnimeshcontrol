@@ -69,6 +69,7 @@ type Service struct {
 	Labels       map[string]string
 	Dependencies []ServiceID
 	Port         int
+	Selectors    []string
 }
 
 // EndpointHealthStatus indicates the health of a service endpoint.

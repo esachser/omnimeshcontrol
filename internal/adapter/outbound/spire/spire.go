@@ -113,7 +113,12 @@ func (m *SpireIdentityManager) RegisterWorkload(ctx context.Context, identity mo
 		return fmt.Errorf("register workload: invalid spiffe ID %q: %w", identity.SPIFFEID, err)
 	}
 
-	selectors, err := m.resolveSelectors(identity.ServiceID.Name, identity.ServiceID.Namespace)
+	selectorTemplates := m.cfg.Selectors
+	if len(identity.Selectors) > 0 {
+		selectorTemplates = identity.Selectors
+	}
+
+	selectors, err := m.resolveSelectors(identity.ServiceID.Name, identity.ServiceID.Namespace, selectorTemplates)
 	if err != nil {
 		return fmt.Errorf("register workload: resolve selectors: %w", err)
 	}
@@ -350,7 +355,7 @@ func NewServerCredentials(ctx context.Context, agentAddr, trustDomain string) (c
 }
 
 // resolveSelectors processes selector templates and produces selectors for workload.
-func (m *SpireIdentityManager) resolveSelectors(name, namespace string) ([]*spiretypes.Selector, error) {
+func (m *SpireIdentityManager) resolveSelectors(name, namespace string, selectorTemplates []string) ([]*spiretypes.Selector, error) {
 	data := struct {
 		Name      string
 		Namespace string
@@ -360,7 +365,11 @@ func (m *SpireIdentityManager) resolveSelectors(name, namespace string) ([]*spir
 	}
 
 	var selectors []*spiretypes.Selector
-	for _, tplStr := range m.cfg.Selectors {
+	for _, tplStr := range selectorTemplates {
+		tplStr = strings.TrimSpace(tplStr)
+		if tplStr == "" {
+			continue
+		}
 		tpl, err := template.New("selector").Parse(tplStr)
 		if err != nil {
 			return nil, fmt.Errorf("parse selector template %q: %w", tplStr, err)
@@ -371,7 +380,7 @@ func (m *SpireIdentityManager) resolveSelectors(name, namespace string) ([]*spir
 			return nil, fmt.Errorf("execute selector template %q: %w", tplStr, err)
 		}
 
-		resolved := buf.String()
+		resolved := strings.TrimSpace(buf.String())
 		parts := strings.SplitN(resolved, ":", 2)
 		if len(parts) != 2 {
 			return nil, fmt.Errorf("invalid resolved selector %q: must be type:value format", resolved)

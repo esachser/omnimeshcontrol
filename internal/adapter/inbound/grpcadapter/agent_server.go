@@ -277,6 +277,7 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 			Name:      svc.ID.Name,
 			Protocol:  svc.Protocol.String(),
 			Port:      int32(svc.Port),
+			Selectors: svc.Selectors,
 		}
 		if svc.MeshAddr.IsValid() {
 			info.MeshAddr = svc.MeshAddr.String()
@@ -357,6 +358,7 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 			Name:      svc.ID.Name,
 			Protocol:  svc.Protocol.String(),
 			Port:      int32(svc.Port),
+			Selectors: svc.Selectors,
 		}
 		if svc.MeshAddr.IsValid() {
 			info.MeshAddr = svc.MeshAddr.String()

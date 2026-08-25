@@ -14,13 +14,15 @@ type serviceSpec struct {
 	Protocol     string   `json:"protocol,omitempty"`
 	Port         int      `json:"port,omitempty"`
 	Dependencies []string `json:"dependencies,omitempty"`
+	Selectors    []string `json:"selectors,omitempty"`
 }
 
 // ServiceToResource converts a domain Service to a generic Resource for storage.
 func ServiceToResource(svc *model.Service) *model.Resource {
 	spec := serviceSpec{
-		Protocol: svc.Protocol.String(),
-		Port:     svc.Port,
+		Protocol:  svc.Protocol.String(),
+		Port:      svc.Port,
+		Selectors: svc.Selectors,
 	}
 	for _, dep := range svc.Dependencies {
 		spec.Dependencies = append(spec.Dependencies, dep.String())
@@ -58,8 +60,9 @@ func ResourceToService(r *model.Resource) (*model.Service, error) {
 			Namespace: r.Metadata.Namespace,
 			Name:      r.Metadata.Name,
 		},
-		Labels: r.Metadata.Labels,
-		Port:   spec.Port,
+		Labels:    r.Metadata.Labels,
+		Port:      spec.Port,
+		Selectors: spec.Selectors,
 	}
 
 	switch spec.Protocol {

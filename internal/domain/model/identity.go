@@ -8,4 +8,6 @@ type ServiceIdentity struct {
 	SPIFFEID string
 	// ServiceID is the mesh service this identity belongs to.
 	ServiceID ServiceID
+	// Selectors defines the workload selectors used to register this identity in SPIRE.
+	Selectors []string
 }

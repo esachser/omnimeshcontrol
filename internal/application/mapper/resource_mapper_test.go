@@ -77,3 +77,61 @@ func TestResourceToTrafficPolicy_InvalidKind(t *testing.T) {
 		t.Error("expected error for invalid kind")
 	}
 }
+
+func TestServiceToResource_And_ResourceToService_WithSelectors(t *testing.T) {
+	svc := &model.Service{
+		ID: model.ServiceID{
+			Namespace: "production",
+			Name:      "order-service",
+		},
+		Protocol: model.ServiceProtocolHTTP,
+		Port:     8080,
+		Labels: map[string]string{
+			"app": "orders",
+		},
+		Dependencies: []model.ServiceID{
+			{Namespace: "production", Name: "payment-service"},
+		},
+		Selectors: []string{
+			"windows:process-name:orders.exe",
+			"windows:path:C:\\apps\\orders.exe",
+		},
+	}
+
+	res := ServiceToResource(svc)
+	if res.Kind != "Service" {
+		t.Errorf("expected Kind 'Service', got %q", res.Kind)
+	}
+	if res.Metadata.Name != "order-service" || res.Metadata.Namespace != "production" {
+		t.Errorf("unexpected metadata: %+v", res.Metadata)
+	}
+
+	decodedSvc, err := ResourceToService(res)
+	if err != nil {
+		t.Fatalf("ResourceToService failed: %v", err)
+	}
+
+	if decodedSvc.ID != svc.ID {
+		t.Errorf("ServiceID mismatch: got %+v, want %+v", decodedSvc.ID, svc.ID)
+	}
+	if decodedSvc.Protocol != svc.Protocol {
+		t.Errorf("Protocol mismatch: got %v, want %v", decodedSvc.Protocol, svc.Protocol)
+	}
+	if decodedSvc.Port != svc.Port {
+		t.Errorf("Port mismatch: got %d, want %d", decodedSvc.Port, svc.Port)
+	}
+	if !reflect.DeepEqual(decodedSvc.Selectors, svc.Selectors) {
+		t.Errorf("Selectors mismatch: got %v, want %v", decodedSvc.Selectors, svc.Selectors)
+	}
+}
+
+func TestResourceToService_InvalidKind(t *testing.T) {
+	resource := &model.Resource{
+		Kind: "TrafficPolicy",
+	}
+
+	_, err := ResourceToService(resource)
+	if err == nil {
+		t.Error("expected error for invalid kind")
+	}
+}

@@ -207,3 +207,51 @@ func TestLoadBalancerPolicyToProto(t *testing.T) {
 		t.Error("expected nil for nil input")
 	}
 }
+
+func TestScopeToProto_IncludesServiceSelectors(t *testing.T) {
+	svc := model.Service{
+		ID:        model.ServiceID{Namespace: "default", Name: "api"},
+		Protocol:  model.ServiceProtocolHTTP,
+		Port:      8080,
+		Selectors: []string{"windows:process-name:api.exe", "unix:uid:1000"},
+	}
+
+	scope := &model.AgentScope{Services: []model.Service{svc}}
+	snapshot := scopeToProto(scope)
+
+	if len(snapshot.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(snapshot.Services))
+	}
+
+	info := snapshot.Services[0]
+	if info.Name != "api" || info.Namespace != "default" {
+		t.Errorf("service identity = %s/%s, want default/api", info.Namespace, info.Name)
+	}
+	if len(info.Selectors) != 2 || info.Selectors[0] != "windows:process-name:api.exe" || info.Selectors[1] != "unix:uid:1000" {
+		t.Errorf("service selectors = %v, want %v", info.Selectors, svc.Selectors)
+	}
+}
+
+func TestScopeUpdateToProto_IncludesServiceSelectors(t *testing.T) {
+	svc := model.Service{
+		ID:        model.ServiceID{Namespace: "prod", Name: "payment"},
+		Protocol:  model.ServiceProtocolGRPC,
+		Port:      9000,
+		Selectors: []string{"windows:path:C:\\apps\\payment.exe"},
+	}
+
+	update := model.ScopeUpdate{
+		Type:     model.ScopeUpdateModify,
+		Services: []model.Service{svc},
+	}
+
+	protoUpdate := scopeUpdateToProto(update)
+	if len(protoUpdate.Services) != 1 {
+		t.Fatalf("expected 1 service in update, got %d", len(protoUpdate.Services))
+	}
+
+	info := protoUpdate.Services[0]
+	if len(info.Selectors) != 1 || info.Selectors[0] != "windows:path:C:\\apps\\payment.exe" {
+		t.Errorf("update service selectors = %v, want %v", info.Selectors, svc.Selectors)
+	}
+}

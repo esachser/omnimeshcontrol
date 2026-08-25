@@ -14,7 +14,7 @@ import (
 
 var svcTestCIDR = netip.MustParsePrefix("100.64.0.0/10")
 
-func newTestServiceApp(t *testing.T) (*ServiceAppService, *apptest.MockResourceStore, *apptest.MockStateStore, *apptest.MockDNSManager) {
+func newTestServiceApp(t *testing.T) (*ServiceAppService, *apptest.MockResourceStore, *apptest.MockStateStore, *apptest.MockDNSManager, *apptest.MockIdentityManager) {
 	t.Helper()
 	resources := apptest.NewMockResourceStore()
 	state := apptest.NewMockStateStore()
@@ -30,11 +30,11 @@ func newTestServiceApp(t *testing.T) (*ServiceAppService, *apptest.MockResourceS
 		Namespaces: nsApp,
 		DNSZone:    "omnimesh.local",
 	})
-	return svc, resources, state, dns
+	return svc, resources, state, dns, identity
 }
 
 func TestServiceAppService_Apply(t *testing.T) {
-	app, resources, state, dns := newTestServiceApp(t)
+	app, resources, state, dns, identity := newTestServiceApp(t)
 	ctx := context.Background()
 
 	// Create namespace first.
@@ -44,9 +44,10 @@ func TestServiceAppService_Apply(t *testing.T) {
 	}
 
 	svc := &model.Service{
-		ID:       model.ServiceID{Namespace: "production", Name: "order-service"},
-		Protocol: model.ServiceProtocolHTTP,
-		Port:     8080,
+		ID:        model.ServiceID{Namespace: "production", Name: "order-service"},
+		Protocol:  model.ServiceProtocolHTTP,
+		Port:      8080,
+		Selectors: []string{"windows:process-name:orders.exe", "unix:uid:1000"},
 	}
 
 	if err := app.Apply(ctx, svc); err != nil {
@@ -76,10 +77,19 @@ func TestServiceAppService_Apply(t *testing.T) {
 	if dnsAddr != svc.MeshAddr {
 		t.Errorf("DNS addr = %v, want %v", dnsAddr, svc.MeshAddr)
 	}
+
+	// Verify identity registration with selectors.
+	registeredID, ok := identity.Identities[svc.ID.String()]
+	if !ok {
+		t.Fatalf("identity was not registered in IdentityManager")
+	}
+	if len(registeredID.Selectors) != 2 || registeredID.Selectors[0] != "windows:process-name:orders.exe" {
+		t.Errorf("registered selectors = %v, want %v", registeredID.Selectors, svc.Selectors)
+	}
 }
 
 func TestServiceAppService_Apply_MissingNamespace(t *testing.T) {
-	app, _, _, _ := newTestServiceApp(t)
+	app, _, _, _, _ := newTestServiceApp(t)
 	ctx := context.Background()
 
 	svc := &model.Service{
@@ -96,7 +106,7 @@ func TestServiceAppService_Apply_MissingNamespace(t *testing.T) {
 }
 
 func TestServiceAppService_Apply_IdempotentIP(t *testing.T) {
-	app, resources, _, _ := newTestServiceApp(t)
+	app, resources, _, _, _ := newTestServiceApp(t)
 	ctx := context.Background()
 
 	nsApp := namespace.NewNamespaceAppService(resources, svcTestCIDR, nil)
@@ -122,7 +132,7 @@ func TestServiceAppService_Apply_IdempotentIP(t *testing.T) {
 }
 
 func TestServiceAppService_GetAndDelete(t *testing.T) {
-	app, resources, _, _ := newTestServiceApp(t)
+	app, resources, _, _, _ := newTestServiceApp(t)
 	ctx := context.Background()
 
 	nsApp := namespace.NewNamespaceAppService(resources, svcTestCIDR, nil)
@@ -156,7 +166,7 @@ func TestServiceAppService_GetAndDelete(t *testing.T) {
 }
 
 func TestServiceAppService_List(t *testing.T) {
-	app, resources, _, _ := newTestServiceApp(t)
+	app, resources, _, _, _ := newTestServiceApp(t)
 	ctx := context.Background()
 
 	nsApp := namespace.NewNamespaceAppService(resources, svcTestCIDR, nil)

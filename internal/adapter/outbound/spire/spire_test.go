@@ -231,3 +231,71 @@ func TestSpireIdentityManager_RegisterAndDeregister(t *testing.T) {
 	}
 	mockServer.mu.Unlock()
 }
+
+func TestSpireIdentityManager_RegisterWorkload_CustomSelectors(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	server := grpc.NewServer()
+	mockServer := &mockSpireServer{entries: make(map[string]*spiretypes.Entry)}
+	entryv1.RegisterEntryServer(server, mockServer)
+
+	go func() {
+		_ = server.Serve(lis)
+	}()
+	defer server.Stop()
+
+	cfg := Config{
+		ServerAddr:  "tcp://" + lis.Addr().String(),
+		TrustDomain: "omnimesh.local",
+		ParentIDs:   []string{"spiffe://omnimesh.local/agents/agent-1"},
+		Selectors:   []string{"windows:process-name:default-fallback.exe"},
+	}
+
+	mgr, err := NewIdentityManager(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewIdentityManager failed: %v", err)
+	}
+	defer mgr.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	identity := model.ServiceIdentity{
+		SPIFFEID: "spiffe://omnimesh.local/ns/production/sa/custom-service",
+		ServiceID: model.ServiceID{
+			Namespace: "production",
+			Name:      "custom-service",
+		},
+		Selectors: []string{
+			"windows:process-name:custom-binary.exe",
+			"windows:path:C:\\services\\{{.Name}}\\app.exe",
+			"unix:uid:1005",
+		},
+	}
+
+	if err := mgr.RegisterWorkload(ctx, identity); err != nil {
+		t.Fatalf("RegisterWorkload failed: %v", err)
+	}
+
+	mockServer.mu.Lock()
+	if len(mockServer.entries) != 1 {
+		t.Fatalf("Expected 1 entry in mock server, got %d", len(mockServer.entries))
+	}
+	var registeredEntry *spiretypes.Entry
+	for _, entry := range mockServer.entries {
+		registeredEntry = entry
+	}
+	mockServer.mu.Unlock()
+
+	expectedSelectors := []*spiretypes.Selector{
+		{Type: "windows", Value: "process-name:custom-binary.exe"},
+		{Type: "windows", Value: "path:C:\\services\\custom-service\\app.exe"},
+		{Type: "unix", Value: "uid:1005"},
+	}
+
+	if !selectorsMatch(registeredEntry.Selectors, expectedSelectors) {
+		t.Errorf("Custom selectors mismatch. Got %v, want %v", registeredEntry.Selectors, expectedSelectors)
+	}
+}

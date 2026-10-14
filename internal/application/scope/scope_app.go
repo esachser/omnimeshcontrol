@@ -24,6 +24,7 @@ type AgentScopeAppService struct {
 	routes      outbound.RouteDistributor
 	targets     inbound.TargetManager
 	authz       inbound.AuthorizationPolicyManager
+	namespaces  inbound.NamespaceManager
 	logger      *slog.Logger
 }
 
@@ -37,6 +38,7 @@ func NewAgentScopeAppService(
 	routes outbound.RouteDistributor,
 	targets inbound.TargetManager,
 	authz inbound.AuthorizationPolicyManager,
+	namespaces inbound.NamespaceManager,
 	logger *slog.Logger,
 ) *AgentScopeAppService {
 	if logger == nil {
@@ -51,6 +53,7 @@ func NewAgentScopeAppService(
 		routes:      routes,
 		targets:     targets,
 		authz:       authz,
+		namespaces:  namespaces,
 		logger:      logger,
 	}
 }
@@ -137,12 +140,35 @@ func (s *AgentScopeAppService) GetAgentScope(ctx context.Context, nodeID string)
 		scope.AuthzPolicies[i] = *ap
 	}
 
+	if s.namespaces != nil {
+		nsList, nsErr := s.namespaces.List(ctx)
+		if nsErr != nil {
+			return nil, fmt.Errorf("scope: list namespaces: %w", nsErr)
+		}
+		for _, ns := range nsList {
+			scope.Namespaces = append(scope.Namespaces, *ns)
+		}
+	} else if s.resources != nil {
+		nsResources, nsErr := s.resources.List(ctx, "core.omnimesh.io/v1/Namespace/")
+		if nsErr != nil {
+			return nil, fmt.Errorf("scope: list namespaces: %w", nsErr)
+		}
+		for _, r := range nsResources {
+			ns, mapErr := mapper.ResourceToNamespace(r)
+			if mapErr != nil {
+				continue
+			}
+			scope.Namespaces = append(scope.Namespaces, *ns)
+		}
+	}
+
 	s.logger.Info("agent scope computed",
 		"nodeID", nodeID,
 		"services", len(scope.Services),
 		"policies", len(scope.TrafficPolicies),
 		"healthRecords", len(scope.EndpointHealth),
 		"routes", len(scope.Routes),
+		"namespaces", len(scope.Namespaces),
 	)
 
 	return scope, nil

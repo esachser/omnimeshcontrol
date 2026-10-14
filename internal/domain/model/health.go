@@ -58,6 +58,8 @@ type AgentScope struct {
 	AuthzPolicies []AuthorizationPolicy
 	// EndpointHealth is the health status of endpoints in this agent's scope.
 	EndpointHealth []EndpointHealth
+	// Namespaces are the namespaces and their subnets owned by omnimesh.
+	Namespaces []Namespace
 }
 
 // ScopeUpdateType indicates what kind of scope change occurred.
@@ -86,4 +88,6 @@ type ScopeUpdate struct {
 	AuthzPolicies []AuthorizationPolicy
 	// EndpointHealth is the health data that changed (if applicable).
 	EndpointHealth []EndpointHealth
+	// Namespaces are the namespaces that changed (if applicable).
+	Namespaces []Namespace
 }

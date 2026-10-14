@@ -185,6 +185,7 @@ func run(logger *slog.Logger) error {
 		routeDistributor,
 		targetApp,
 		authzApp,
+		nsApp,
 		logger.WithGroup("scope_app"),
 	)
 
@@ -202,6 +203,13 @@ func run(logger *slog.Logger) error {
 	go func() {
 		if err := nodeUpdates.Run(ctx); err != nil {
 			logger.Warn("node updates stopped", "error", err)
+		}
+	}()
+
+	namespaceUpdates := namespace.NewNamespaceUpdateService(resourceStore, agentServer, logger.WithGroup("namespace_updates"))
+	go func() {
+		if err := namespaceUpdates.Run(ctx); err != nil {
+			logger.Warn("namespace updates stopped", "error", err)
 		}
 	}()
 

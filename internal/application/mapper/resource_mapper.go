@@ -79,8 +79,9 @@ func ResourceToService(r *model.Resource) (*model.Service, error) {
 
 // namespaceSpec is the JSON spec representation for Namespace resources.
 type namespaceSpec struct {
-	Isolation string `json:"isolation,omitempty"`
-	CIDR      string `json:"cidr,omitempty"`
+	Isolation string   `json:"isolation,omitempty"`
+	CIDR      string   `json:"cidr,omitempty"`
+	Subnets   []string `json:"subnets,omitempty"`
 }
 
 // NamespaceToResource converts a domain Namespace to a generic Resource.
@@ -88,6 +89,14 @@ func NamespaceToResource(ns *model.Namespace) *model.Resource {
 	spec := namespaceSpec{Isolation: ns.Isolation.String()}
 	if ns.CIDR.IsValid() {
 		spec.CIDR = ns.CIDR.String()
+	}
+	for _, sub := range ns.Subnets {
+		if sub.IsValid() {
+			spec.Subnets = append(spec.Subnets, sub.String())
+		}
+	}
+	if len(spec.Subnets) == 0 && spec.CIDR != "" {
+		spec.Subnets = []string{spec.CIDR}
 	}
 	specJSON, _ := json.Marshal(spec)
 
@@ -133,6 +142,20 @@ func ResourceToNamespace(r *model.Resource) (*model.Namespace, error) {
 			return nil, fmt.Errorf("parse namespace CIDR %q: %w", spec.CIDR, err)
 		}
 		ns.CIDR = cidr
+	}
+
+	for _, subStr := range spec.Subnets {
+		sub, err := netip.ParsePrefix(subStr)
+		if err != nil {
+			return nil, fmt.Errorf("parse namespace subnet %q: %w", subStr, err)
+		}
+		ns.Subnets = append(ns.Subnets, sub)
+	}
+
+	if len(ns.Subnets) == 0 && ns.CIDR.IsValid() {
+		ns.Subnets = []netip.Prefix{ns.CIDR}
+	} else if !ns.CIDR.IsValid() && len(ns.Subnets) > 0 {
+		ns.CIDR = ns.Subnets[0]
 	}
 
 	return ns, nil

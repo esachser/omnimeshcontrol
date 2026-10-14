@@ -79,6 +79,7 @@ message ScopeSnapshot {
   repeated TrafficPolicyInfo traffic_policies = 3;
   repeated AuthzPolicyInfo authz_policies = 4;
   repeated EndpointHealthInfo endpoint_health = 5;
+  repeated NamespaceInfo namespaces = 6;
 }
 
 message ScopeUpdate {
@@ -88,6 +89,7 @@ message ScopeUpdate {
   repeated TrafficPolicyInfo traffic_policies = 4;
   repeated EndpointHealthInfo endpoint_health = 5;
   repeated AuthzPolicyInfo authz_policies = 6;
+  repeated NamespaceInfo namespaces = 7;
 }
 
 enum ScopeUpdateType {
@@ -98,6 +100,14 @@ enum ScopeUpdateType {
 }
 
 // --- Shared Info Messages ---
+
+message NamespaceInfo {
+  string name = 1;
+  string cidr = 2; // Primary CIDR prefix used for allocating mesh IPs
+  repeated string subnets = 3; // All subnets owned by omnimesh in this namespace
+  string isolation = 4; // "strict", "open"
+  map<string, string> labels = 5;
+}
 
 message ServiceInfo {
   string namespace = 1;

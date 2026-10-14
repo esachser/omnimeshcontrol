@@ -1,6 +1,7 @@
 package mapper
 
 import (
+	"net/netip"
 	"reflect"
 	"testing"
 	"time"
@@ -135,3 +136,50 @@ func TestResourceToService_InvalidKind(t *testing.T) {
 		t.Error("expected error for invalid kind")
 	}
 }
+
+func TestNamespaceToResource_And_ResourceToNamespace_WithSubnets(t *testing.T) {
+	ns := &model.Namespace{
+		Name:      "test-ns",
+		Isolation: model.NamespaceIsolationStrict,
+		Labels: map[string]string{
+			"env": "staging",
+		},
+		CIDR: netip.MustParsePrefix("100.64.10.0/24"),
+		Subnets: []netip.Prefix{
+			netip.MustParsePrefix("100.64.10.0/24"),
+			netip.MustParsePrefix("100.64.20.0/24"),
+		},
+	}
+
+	res := NamespaceToResource(ns)
+	if res.Kind != "Namespace" {
+		t.Errorf("expected Kind 'Namespace', got %q", res.Kind)
+	}
+	if res.Metadata.Name != "test-ns" {
+		t.Errorf("expected name 'test-ns', got %q", res.Metadata.Name)
+	}
+
+	decoded, err := ResourceToNamespace(res)
+	if err != nil {
+		t.Fatalf("ResourceToNamespace failed: %v", err)
+	}
+
+	if decoded.Name != ns.Name {
+		t.Errorf("Name mismatch: got %q, want %q", decoded.Name, ns.Name)
+	}
+	if decoded.Isolation != ns.Isolation {
+		t.Errorf("Isolation mismatch: got %v, want %v", decoded.Isolation, ns.Isolation)
+	}
+	if decoded.CIDR != ns.CIDR {
+		t.Errorf("CIDR mismatch: got %v, want %v", decoded.CIDR, ns.CIDR)
+	}
+	if len(decoded.Subnets) != len(ns.Subnets) {
+		t.Fatalf("Subnets length mismatch: got %d, want %d", len(decoded.Subnets), len(ns.Subnets))
+	}
+	for i := range decoded.Subnets {
+		if decoded.Subnets[i] != ns.Subnets[i] {
+			t.Errorf("Subnets[%d] mismatch: got %v, want %v", i, decoded.Subnets[i], ns.Subnets[i])
+		}
+	}
+}
+

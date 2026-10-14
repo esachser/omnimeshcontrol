@@ -1,6 +1,7 @@
 package grpcadapter
 
 import (
+	"net/netip"
 	"testing"
 	"time"
 
@@ -255,3 +256,78 @@ func TestScopeUpdateToProto_IncludesServiceSelectors(t *testing.T) {
 		t.Errorf("update service selectors = %v, want %v", info.Selectors, svc.Selectors)
 	}
 }
+
+func TestScopeToProto_IncludesNamespacesAndSubnets(t *testing.T) {
+	ns := model.Namespace{
+		Name:      "prod",
+		Isolation: model.NamespaceIsolationStrict,
+		Labels:    map[string]string{"env": "production"},
+		CIDR:      netip.MustParsePrefix("100.64.10.0/24"),
+		Subnets: []netip.Prefix{
+			netip.MustParsePrefix("100.64.10.0/24"),
+			netip.MustParsePrefix("100.64.20.0/24"),
+		},
+	}
+
+	scope := &model.AgentScope{
+		Namespaces: []model.Namespace{ns},
+	}
+
+	snapshot := scopeToProto(scope)
+	if len(snapshot.Namespaces) != 1 {
+		t.Fatalf("expected 1 namespace, got %d", len(snapshot.Namespaces))
+	}
+
+	info := snapshot.Namespaces[0]
+	if info.Name != "prod" {
+		t.Errorf("Namespace.Name = %q, want prod", info.Name)
+	}
+	if info.Cidr != "100.64.10.0/24" {
+		t.Errorf("Namespace.Cidr = %q, want 100.64.10.0/24", info.Cidr)
+	}
+	if info.Isolation != "strict" {
+		t.Errorf("Namespace.Isolation = %q, want strict", info.Isolation)
+	}
+	if len(info.Subnets) != 2 {
+		t.Fatalf("expected 2 subnets, got %d", len(info.Subnets))
+	}
+	if info.Subnets[0] != "100.64.10.0/24" || info.Subnets[1] != "100.64.20.0/24" {
+		t.Errorf("Namespace.Subnets = %v, want [100.64.10.0/24, 100.64.20.0/24]", info.Subnets)
+	}
+	if info.Labels["env"] != "production" {
+		t.Errorf("Namespace.Labels[env] = %q, want production", info.Labels["env"])
+	}
+}
+
+func TestScopeUpdateToProto_IncludesNamespacesAndSubnets(t *testing.T) {
+	ns := model.Namespace{
+		Name:      "dev",
+		Isolation: model.NamespaceIsolationOpen,
+		CIDR:      netip.MustParsePrefix("100.64.30.0/24"),
+	}
+
+	update := model.ScopeUpdate{
+		Type:       model.ScopeUpdateAdd,
+		Namespaces: []model.Namespace{ns},
+	}
+
+	protoUpdate := scopeUpdateToProto(update)
+	if len(protoUpdate.Namespaces) != 1 {
+		t.Fatalf("expected 1 namespace in update, got %d", len(protoUpdate.Namespaces))
+	}
+
+	info := protoUpdate.Namespaces[0]
+	if info.Name != "dev" {
+		t.Errorf("Namespace.Name = %q, want dev", info.Name)
+	}
+	if info.Cidr != "100.64.30.0/24" {
+		t.Errorf("Namespace.Cidr = %q, want 100.64.30.0/24", info.Cidr)
+	}
+	if info.Isolation != "open" {
+		t.Errorf("Namespace.Isolation = %q, want open", info.Isolation)
+	}
+	if len(info.Subnets) != 1 || info.Subnets[0] != "100.64.30.0/24" {
+		t.Errorf("Namespace.Subnets = %v, want [100.64.30.0/24]", info.Subnets)
+	}
+}
+

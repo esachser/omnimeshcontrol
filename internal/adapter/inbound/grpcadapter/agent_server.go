@@ -312,6 +312,10 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 		snapshot.AuthzPolicies = append(snapshot.AuthzPolicies, authzPolicyToAgentProto(policy))
 	}
 
+	for _, ns := range scope.Namespaces {
+		snapshot.Namespaces = append(snapshot.Namespaces, namespaceToAgentProto(ns))
+	}
+
 	return snapshot
 }
 
@@ -394,6 +398,10 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 
 	for _, policy := range update.AuthzPolicies {
 		protoUpdate.AuthzPolicies = append(protoUpdate.AuthzPolicies, authzPolicyToAgentProto(policy))
+	}
+
+	for _, ns := range update.Namespaces {
+		protoUpdate.Namespaces = append(protoUpdate.Namespaces, namespaceToAgentProto(ns))
 	}
 
 	return protoUpdate
@@ -546,6 +554,26 @@ func healthStatusToProto(s model.EndpointHealthStatus) omnimeshv1.EndpointHealth
 	default:
 		return omnimeshv1.EndpointHealthStatus_ENDPOINT_HEALTH_STATUS_UNSPECIFIED
 	}
+}
+
+func namespaceToAgentProto(ns model.Namespace) *omnimeshv1.NamespaceInfo {
+	info := &omnimeshv1.NamespaceInfo{
+		Name:      ns.Name,
+		Isolation: ns.Isolation.String(),
+		Labels:    ns.Labels,
+	}
+	if ns.CIDR.IsValid() {
+		info.Cidr = ns.CIDR.String()
+	}
+	for _, sub := range ns.AllSubnets() {
+		if sub.IsValid() {
+			info.Subnets = append(info.Subnets, sub.String())
+		}
+	}
+	if len(info.Subnets) == 0 && info.Cidr != "" {
+		info.Subnets = []string{info.Cidr}
+	}
+	return info
 }
 
 // BroadcastUpdate pushes a differential scope update to all active agents.

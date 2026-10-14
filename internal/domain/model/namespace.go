@@ -33,4 +33,20 @@ type Namespace struct {
 	// CIDR is the IP prefix used for allocating mesh IPs to services in this namespace.
 	// It is immutable after namespace creation.
 	CIDR netip.Prefix
+	// Subnets contains all IP prefixes owned by omnimesh in this namespace.
+	Subnets []netip.Prefix
 }
+
+// AllSubnets returns all subnets associated with this namespace.
+// If Subnets is populated, it returns Subnets; otherwise if CIDR is valid,
+// it returns a slice containing CIDR.
+func (n Namespace) AllSubnets() []netip.Prefix {
+	if len(n.Subnets) > 0 {
+		return n.Subnets
+	}
+	if n.CIDR.IsValid() {
+		return []netip.Prefix{n.CIDR}
+	}
+	return nil
+}
+

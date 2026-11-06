@@ -291,9 +291,13 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 			ServiceName: route.TargetService,
 			TargetNodes: []*omnimeshv1.NodeEndpointInfo{
 				{
-					NodeId: route.NodeID,
-					Labels: route.Labels,
-					Addr:   route.Address,
+					NodeId:        route.NodeID,
+					Labels:        route.Labels,
+					Addr:          route.Address,
+					RouteName:     route.Name,
+					Target:        route.Target,
+					TargetAddress: route.TargetAddress,
+					Id:            route.Name,
 				},
 			},
 		}
@@ -382,6 +386,7 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 					RouteName:     route.Name,
 					Target:        route.Target,
 					TargetAddress: route.TargetAddress,
+					Id:            route.Name,
 				},
 			},
 		}

@@ -1142,6 +1142,7 @@ type NodeEndpointInfo struct {
 	Target        string                 `protobuf:"bytes,4,opt,name=target,proto3" json:"target,omitempty"`
 	TargetAddress string                 `protobuf:"bytes,5,opt,name=target_address,json=targetAddress,proto3" json:"target_address,omitempty"`
 	Labels        map[string]string      `protobuf:"bytes,6,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Id            string                 `protobuf:"bytes,7,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1216,6 +1217,13 @@ func (x *NodeEndpointInfo) GetLabels() map[string]string {
 		return x.Labels
 	}
 	return nil
+}
+
+func (x *NodeEndpointInfo) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
 }
 
 type TrafficPolicyInfo struct {
@@ -2067,7 +2075,7 @@ const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"\tRouteInfo\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12@\n" +
-	"\ftarget_nodes\x18\x03 \x03(\v2\x1d.omnimesh.v1.NodeEndpointInfoR\vtargetNodes\"\x9b\x02\n" +
+	"\ftarget_nodes\x18\x03 \x03(\v2\x1d.omnimesh.v1.NodeEndpointInfoR\vtargetNodes\"\xab\x02\n" +
 	"\x10NodeEndpointInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x1d\n" +
@@ -2075,7 +2083,8 @@ const file_omnimesh_v1_agent_proto_rawDesc = "" +
 	"route_name\x18\x03 \x01(\tR\trouteName\x12\x16\n" +
 	"\x06target\x18\x04 \x01(\tR\x06target\x12%\n" +
 	"\x0etarget_address\x18\x05 \x01(\tR\rtargetAddress\x12A\n" +
-	"\x06labels\x18\x06 \x03(\v2).omnimesh.v1.NodeEndpointInfo.LabelsEntryR\x06labels\x1a9\n" +
+	"\x06labels\x18\x06 \x03(\v2).omnimesh.v1.NodeEndpointInfo.LabelsEntryR\x06labels\x12\x0e\n" +
+	"\x02id\x18\a \x01(\tR\x02id\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcf\x04\n" +

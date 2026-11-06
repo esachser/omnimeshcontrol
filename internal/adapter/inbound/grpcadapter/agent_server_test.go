@@ -331,3 +331,106 @@ func TestScopeUpdateToProto_IncludesNamespacesAndSubnets(t *testing.T) {
 	}
 }
 
+func TestScopeToProto_IncludesRouteNodeEndpointInfo(t *testing.T) {
+	route := model.TargetRoute{
+		Name:          "svc-instance-1",
+		Namespace:     "prod",
+		TargetService: "orders",
+		NodeID:        "node-1",
+		Address:       "10.0.0.1:15008",
+		Target:        "cluster-a",
+		TargetAddress: "198.51.100.1:15008",
+		Labels:        map[string]string{"version": "v1"},
+	}
+
+	scope := &model.AgentScope{
+		Routes: []model.TargetRoute{route},
+	}
+
+	snapshot := scopeToProto(scope)
+	if len(snapshot.Routes) != 1 {
+		t.Fatalf("expected 1 route, got %d", len(snapshot.Routes))
+	}
+
+	ri := snapshot.Routes[0]
+	if ri.Namespace != "prod" || ri.ServiceName != "orders" {
+		t.Errorf("RouteInfo = %s/%s, want prod/orders", ri.Namespace, ri.ServiceName)
+	}
+	if len(ri.TargetNodes) != 1 {
+		t.Fatalf("expected 1 target node, got %d", len(ri.TargetNodes))
+	}
+
+	ep := ri.TargetNodes[0]
+	if ep.Id != "svc-instance-1" {
+		t.Errorf("NodeEndpointInfo.Id = %q, want svc-instance-1", ep.Id)
+	}
+	if ep.RouteName != "svc-instance-1" {
+		t.Errorf("NodeEndpointInfo.RouteName = %q, want svc-instance-1", ep.RouteName)
+	}
+	if ep.NodeId != "node-1" {
+		t.Errorf("NodeEndpointInfo.NodeId = %q, want node-1", ep.NodeId)
+	}
+	if ep.Addr != "10.0.0.1:15008" {
+		t.Errorf("NodeEndpointInfo.Addr = %q, want 10.0.0.1:15008", ep.Addr)
+	}
+	if ep.Target != "cluster-a" {
+		t.Errorf("NodeEndpointInfo.Target = %q, want cluster-a", ep.Target)
+	}
+	if ep.TargetAddress != "198.51.100.1:15008" {
+		t.Errorf("NodeEndpointInfo.TargetAddress = %q, want 198.51.100.1:15008", ep.TargetAddress)
+	}
+	if ep.Labels["version"] != "v1" {
+		t.Errorf("NodeEndpointInfo.Labels[version] = %q, want v1", ep.Labels["version"])
+	}
+}
+
+func TestScopeUpdateToProto_IncludesRouteNodeEndpointInfo(t *testing.T) {
+	route := model.TargetRoute{
+		Name:          "svc-instance-2",
+		Namespace:     "prod",
+		TargetService: "orders",
+		NodeID:        "node-2",
+		Address:       "10.0.0.2:15008",
+		Target:        "cluster-b",
+		TargetAddress: "198.51.100.2:15008",
+		Labels:        map[string]string{"version": "v2"},
+	}
+
+	update := model.ScopeUpdate{
+		Type:   model.ScopeUpdateAdd,
+		Routes: []model.TargetRoute{route},
+	}
+
+	protoUpdate := scopeUpdateToProto(update)
+	if len(protoUpdate.Routes) != 1 {
+		t.Fatalf("expected 1 route in update, got %d", len(protoUpdate.Routes))
+	}
+
+	ri := protoUpdate.Routes[0]
+	if len(ri.TargetNodes) != 1 {
+		t.Fatalf("expected 1 target node, got %d", len(ri.TargetNodes))
+	}
+
+	ep := ri.TargetNodes[0]
+	if ep.Id != "svc-instance-2" {
+		t.Errorf("NodeEndpointInfo.Id = %q, want svc-instance-2", ep.Id)
+	}
+	if ep.RouteName != "svc-instance-2" {
+		t.Errorf("NodeEndpointInfo.RouteName = %q, want svc-instance-2", ep.RouteName)
+	}
+	if ep.NodeId != "node-2" {
+		t.Errorf("NodeEndpointInfo.NodeId = %q, want node-2", ep.NodeId)
+	}
+	if ep.Addr != "10.0.0.2:15008" {
+		t.Errorf("NodeEndpointInfo.Addr = %q, want 10.0.0.2:15008", ep.Addr)
+	}
+	if ep.Target != "cluster-b" {
+		t.Errorf("NodeEndpointInfo.Target = %q, want cluster-b", ep.Target)
+	}
+	if ep.TargetAddress != "198.51.100.2:15008" {
+		t.Errorf("NodeEndpointInfo.TargetAddress = %q, want 198.51.100.2:15008", ep.TargetAddress)
+	}
+	if ep.Labels["version"] != "v2" {
+		t.Errorf("NodeEndpointInfo.Labels[version] = %q, want v2", ep.Labels["version"])
+	}
+}

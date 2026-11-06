@@ -131,6 +131,7 @@ message NodeEndpointInfo {
   string target = 4;
   string target_address = 5;
   map<string, string> labels = 6;
+  string id = 7;
 }
 
 message TrafficPolicyInfo {

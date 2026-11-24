@@ -64,7 +64,11 @@ func run(logger *slog.Logger) error {
 	spireAgentAddr := envOrDefault("OMNIMESH_SPIRE_AGENT_ADDR", defaultSpireAgentAddr)
 	spireTrustDomain := envOrDefault("OMNIMESH_SPIRE_TRUST_DOMAIN", dnsZone)
 	spireParentIDs := strings.Split(envOrDefault("OMNIMESH_SPIRE_PARENT_IDS", "spiffe://omnimesh.local/agents/dev-agent"), ",")
-	spireSelectors := strings.Split(envOrDefault("OMNIMESH_SPIRE_SELECTORS", "windows:process-name:{{.Name}}.exe,unix:user:{{.Name}}"), ",")
+	rawSpireSelectorSets := os.Getenv("OMNIMESH_SPIRE_SELECTOR_SETS")
+	if rawSpireSelectorSets == "" {
+		rawSpireSelectorSets = envOrDefault("OMNIMESH_SPIRE_SELECTORS", "windows:process-name:{{.Name}}.exe;unix:user:{{.Name}}")
+	}
+	spireSelectorSets := spire.ParseSelectorSets(rawSpireSelectorSets)
 	spireCACert := os.Getenv("OMNIMESH_SPIRE_CA_CERT")
 	spireClientCert := os.Getenv("OMNIMESH_SPIRE_CERT")
 	spireClientKey := os.Getenv("OMNIMESH_SPIRE_KEY")
@@ -130,14 +134,14 @@ func run(logger *slog.Logger) error {
 	if spireEnabled {
 		logger.Info("initializing SPIRE identity manager...")
 		spireMgr, err := spire.NewIdentityManager(spire.Config{
-			ServerAddr:  spireServerAddr,
-			AgentAddr:   spireAgentAddr,
-			TrustDomain: spireTrustDomain,
-			ParentIDs:   spireParentIDs,
-			Selectors:   spireSelectors,
-			CACertFile:  spireCACert,
-			CertFile:    spireClientCert,
-			KeyFile:     spireClientKey,
+			ServerAddr:   spireServerAddr,
+			AgentAddr:    spireAgentAddr,
+			TrustDomain:  spireTrustDomain,
+			ParentIDs:    spireParentIDs,
+			SelectorSets: spireSelectorSets,
+			CACertFile:   spireCACert,
+			CertFile:     spireClientCert,
+			KeyFile:      spireClientKey,
 		}, logger.WithGroup("spire"))
 		if err != nil {
 			return fmt.Errorf("failed to initialize SPIRE identity manager: %w", err)

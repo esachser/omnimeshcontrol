@@ -126,6 +126,102 @@ func TestServiceToResource_And_ResourceToService_WithSelectors(t *testing.T) {
 	}
 }
 
+func TestServiceToResource_And_ResourceToService_WithSelectorSets(t *testing.T) {
+	svc := &model.Service{
+		ID: model.ServiceID{
+			Namespace: "production",
+			Name:      "payment-service",
+		},
+		Protocol: model.ServiceProtocolGRPC,
+		Port:     50051,
+		SelectorSets: [][]string{
+			{"windows:user_sid:S-1-5-21-1001", "windows:sha256:deadbeef"},
+			{"unix:user:payment", "unix:pid:4321"},
+		},
+	}
+
+	res := ServiceToResource(svc)
+	decoded, err := ResourceToService(res)
+	if err != nil {
+		t.Fatalf("ResourceToService failed: %v", err)
+	}
+
+	if !reflect.DeepEqual(decoded.SelectorSets, svc.SelectorSets) {
+		t.Errorf("SelectorSets mismatch: got %v, want %v", decoded.SelectorSets, svc.SelectorSets)
+	}
+}
+
+func TestResourceToService_SelectorSetFormats(t *testing.T) {
+	tests := []struct {
+		name     string
+		specJSON string
+		wantSets [][]string
+		wantFlat []string
+		wantErr  bool
+	}{
+		{
+			name:     "selectorSets array of string arrays",
+			specJSON: `{"protocol":"HTTP","port":8080,"selectorSets":[["windows:user_sid:S-1","windows:sha256:abc"],["unix:user:app","unix:pid:99"]]}`,
+			wantSets: [][]string{
+				{"windows:user_sid:S-1", "windows:sha256:abc"},
+				{"unix:user:app", "unix:pid:99"},
+			},
+		},
+		{
+			name:     "selectorSets array of objects",
+			specJSON: `{"protocol":"HTTP","port":8080,"selectorSets":[{"selectors":["windows:user_sid:S-1","windows:sha256:abc"]},{"selectors":["unix:user:app","unix:pid:99"]}]}`,
+			wantSets: [][]string{
+				{"windows:user_sid:S-1", "windows:sha256:abc"},
+				{"unix:user:app", "unix:pid:99"},
+			},
+		},
+		{
+			name:     "nested arrays under selectors",
+			specJSON: `{"protocol":"HTTP","port":8080,"selectors":[["windows:user_sid:S-1","windows:sha256:abc"],["unix:user:app","unix:pid:99"]]}`,
+			wantSets: [][]string{
+				{"windows:user_sid:S-1", "windows:sha256:abc"},
+				{"unix:user:app", "unix:pid:99"},
+			},
+		},
+		{
+			name:     "legacy flat selectors",
+			specJSON: `{"protocol":"HTTP","port":8080,"selectors":["unix:user:app","unix:pid:99"]}`,
+			wantFlat: []string{"unix:user:app", "unix:pid:99"},
+		},
+		{
+			name:     "invalid selectorSets element",
+			specJSON: `{"protocol":"HTTP","port":8080,"selectorSets":["not-an-array"]}`,
+			wantErr:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := &model.Resource{
+				Kind: "Service",
+				Metadata: model.ResourceMetadata{
+					Name:      "orders",
+					Namespace: "production",
+				},
+				Spec: []byte(tc.specJSON),
+			}
+			svc, err := ResourceToService(res)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ResourceToService() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
+			if !reflect.DeepEqual(svc.SelectorSets, tc.wantSets) {
+				t.Errorf("SelectorSets = %v, want %v", svc.SelectorSets, tc.wantSets)
+			}
+			if !reflect.DeepEqual(svc.Selectors, tc.wantFlat) {
+				t.Errorf("Selectors = %v, want %v", svc.Selectors, tc.wantFlat)
+			}
+		})
+	}
+}
+
 func TestResourceToService_InvalidKind(t *testing.T) {
 	resource := &model.Resource{
 		Kind: "TrafficPolicy",
@@ -182,4 +278,3 @@ func TestNamespaceToResource_And_ResourceToNamespace_WithSubnets(t *testing.T) {
 		}
 	}
 }
-

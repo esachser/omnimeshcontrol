@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -297,5 +298,169 @@ func TestSpireIdentityManager_RegisterWorkload_CustomSelectors(t *testing.T) {
 
 	if !selectorsMatch(registeredEntry.Selectors, expectedSelectors) {
 		t.Errorf("Custom selectors mismatch. Got %v, want %v", registeredEntry.Selectors, expectedSelectors)
+	}
+}
+
+func TestSpireIdentityManager_RegisterWorkload_MultipleSelectorSets(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	server := grpc.NewServer()
+	mockServer := &mockSpireServer{entries: make(map[string]*spiretypes.Entry)}
+	entryv1.RegisterEntryServer(server, mockServer)
+
+	go func() {
+		_ = server.Serve(lis)
+	}()
+	defer server.Stop()
+
+	cfg := Config{
+		ServerAddr:  "tcp://" + lis.Addr().String(),
+		TrustDomain: "omnimesh.local",
+		ParentIDs:   []string{"spiffe://omnimesh.local/agents/agent-1"},
+		SelectorSets: [][]string{
+			{"windows:process-name:{{.Name}}.exe"},
+			{"unix:user:{{.Name}}"},
+		},
+	}
+
+	mgr, err := NewIdentityManager(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewIdentityManager failed: %v", err)
+	}
+	defer mgr.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 1. Register with distinct Windows and Linux selector sets.
+	identity := model.ServiceIdentity{
+		SPIFFEID: "spiffe://omnimesh.local/ns/production/sa/multi-os-service",
+		ServiceID: model.ServiceID{
+			Namespace: "production",
+			Name:      "multi-os-service",
+		},
+		SelectorSets: [][]string{
+			{"windows:user_sid:S-1-5-21-1001", "windows:sha256:abcdef123456"},
+			{"unix:user:{{.Name}}", "unix:pid:4321"},
+		},
+	}
+
+	if err := mgr.RegisterWorkload(ctx, identity); err != nil {
+		t.Fatalf("RegisterWorkload failed: %v", err)
+	}
+
+	assertMockEntries := func(wantSets [][]*spiretypes.Selector) {
+		t.Helper()
+		mockServer.mu.Lock()
+		defer mockServer.mu.Unlock()
+		if len(mockServer.entries) != len(wantSets) {
+			t.Fatalf("expected %d SPIRE entries, got %d", len(wantSets), len(mockServer.entries))
+		}
+		for _, want := range wantSets {
+			found := false
+			for _, entry := range mockServer.entries {
+				if selectorsMatch(entry.Selectors, want) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("missing expected SPIRE entry with selectors %v", want)
+			}
+		}
+	}
+
+	initialWant := [][]*spiretypes.Selector{
+		{
+			{Type: "windows", Value: "user_sid:S-1-5-21-1001"},
+			{Type: "windows", Value: "sha256:abcdef123456"},
+		},
+		{
+			{Type: "unix", Value: "user:multi-os-service"},
+			{Type: "unix", Value: "pid:4321"},
+		},
+	}
+	assertMockEntries(initialWant)
+
+	// 2. Re-registering with the same selector sets is idempotent.
+	if err := mgr.RegisterWorkload(ctx, identity); err != nil {
+		t.Fatalf("re-RegisterWorkload failed: %v", err)
+	}
+	assertMockEntries(initialWant)
+
+	// 3. Updating selector sets replaces stale entries cleanly.
+	identity.SelectorSets = [][]string{
+		{"windows:user_sid:S-1-5-21-1001", "windows:sha256:999999fedcba"},
+		{"unix:user:{{.Name}}", "unix:pid:8765"},
+	}
+	if err := mgr.RegisterWorkload(ctx, identity); err != nil {
+		t.Fatalf("update RegisterWorkload failed: %v", err)
+	}
+	updatedWant := [][]*spiretypes.Selector{
+		{
+			{Type: "windows", Value: "user_sid:S-1-5-21-1001"},
+			{Type: "windows", Value: "sha256:999999fedcba"},
+		},
+		{
+			{Type: "unix", Value: "user:multi-os-service"},
+			{Type: "unix", Value: "pid:8765"},
+		},
+	}
+	assertMockEntries(updatedWant)
+
+	// 4. Deregister removes all entries for the service.
+	if err := mgr.DeregisterWorkload(ctx, identity.ServiceID); err != nil {
+		t.Fatalf("DeregisterWorkload failed: %v", err)
+	}
+	mockServer.mu.Lock()
+	if len(mockServer.entries) != 0 {
+		t.Errorf("expected 0 entries after deregister, got %d", len(mockServer.entries))
+	}
+	mockServer.mu.Unlock()
+}
+
+func TestParseSelectorSets(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want [][]string
+	}{
+		{
+			name: "empty",
+			raw:  "",
+			want: nil,
+		},
+		{
+			name: "single set with multiple selectors",
+			raw:  "windows:user_sid:S-1-5-21-1, windows:sha256:abc",
+			want: [][]string{{"windows:user_sid:S-1-5-21-1", "windows:sha256:abc"}},
+		},
+		{
+			name: "windows and linux sets",
+			raw:  "windows:user_sid:S-1-5-21-1,windows:sha256:abc;unix:user:{{.Name}},unix:pid:1234",
+			want: [][]string{
+				{"windows:user_sid:S-1-5-21-1", "windows:sha256:abc"},
+				{"unix:user:{{.Name}}", "unix:pid:1234"},
+			},
+		},
+		{
+			name: "ignores empty sets and extra delimiters",
+			raw:  " ; windows:process-name:{{.Name}}.exe ; ; unix:user:{{.Name}}, ; ",
+			want: [][]string{
+				{"windows:process-name:{{.Name}}.exe"},
+				{"unix:user:{{.Name}}"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ParseSelectorSets(tc.raw)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ParseSelectorSets(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
 	}
 }

@@ -272,17 +272,7 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 	snapshot := &omnimeshv1.ScopeSnapshot{}
 
 	for _, svc := range scope.Services {
-		info := &omnimeshv1.ServiceInfo{
-			Namespace: svc.ID.Namespace,
-			Name:      svc.ID.Name,
-			Protocol:  svc.Protocol.String(),
-			Port:      int32(svc.Port),
-			Selectors: svc.Selectors,
-		}
-		if svc.MeshAddr.IsValid() {
-			info.MeshAddr = svc.MeshAddr.String()
-		}
-		snapshot.Services = append(snapshot.Services, info)
+		snapshot.Services = append(snapshot.Services, serviceToAgentProto(svc))
 	}
 
 	for _, route := range scope.Routes {
@@ -361,17 +351,7 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 	}
 
 	for _, svc := range update.Services {
-		info := &omnimeshv1.ServiceInfo{
-			Namespace: svc.ID.Namespace,
-			Name:      svc.ID.Name,
-			Protocol:  svc.Protocol.String(),
-			Port:      int32(svc.Port),
-			Selectors: svc.Selectors,
-		}
-		if svc.MeshAddr.IsValid() {
-			info.MeshAddr = svc.MeshAddr.String()
-		}
-		protoUpdate.Services = append(protoUpdate.Services, info)
+		protoUpdate.Services = append(protoUpdate.Services, serviceToAgentProto(svc))
 	}
 
 	for _, route := range update.Routes {
@@ -410,6 +390,24 @@ func scopeUpdateToProto(update model.ScopeUpdate) *omnimeshv1.ScopeUpdate {
 	}
 
 	return protoUpdate
+}
+
+func serviceToAgentProto(svc model.Service) *omnimeshv1.ServiceInfo {
+	info := &omnimeshv1.ServiceInfo{
+		Namespace: svc.ID.Namespace,
+		Name:      svc.ID.Name,
+		Protocol:  svc.Protocol.String(),
+		Port:      int32(svc.Port),
+	}
+	for _, set := range svc.EffectiveSelectorSets() {
+		info.SelectorSets = append(info.SelectorSets, &omnimeshv1.SelectorSet{
+			Selectors: set,
+		})
+	}
+	if svc.MeshAddr.IsValid() {
+		info.MeshAddr = svc.MeshAddr.String()
+	}
+	return info
 }
 
 func trafficPolicyToProto(policy model.TrafficPolicy) *omnimeshv1.TrafficPolicyInfo {

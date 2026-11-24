@@ -38,8 +38,12 @@ type Config struct {
 	TrustDomain string
 	// ParentIDs is a list of parent agent SPIFFE IDs that are authorized to fetch workload SVIDs.
 	ParentIDs []string
-	// Selectors is a list of templated workload selectors (e.g. "windows:process-name:{{.Name}}.exe").
+	// Selectors is a list of templated workload selectors (deprecated: use SelectorSets).
 	Selectors []string
+	// SelectorSets is a list of independent templated selector sets.
+	// Selectors within each set are AND-ed together; each set is registered
+	// as a separate SPIRE workload entry (OR-ed across sets).
+	SelectorSets [][]string
 	// CACertFile is an optional path to a PEM CA certificate for verifying the SPIRE Server.
 	CACertFile string
 	// CertFile is an optional path to a PEM client certificate for mTLS authentication to SPIRE Server.
@@ -71,7 +75,7 @@ func NewIdentityManager(cfg Config, logger *slog.Logger) (*SpireIdentityManager,
 	if len(cfg.ParentIDs) == 0 {
 		return nil, fmt.Errorf("spire config: at least one ParentID is required")
 	}
-	if len(cfg.Selectors) == 0 {
+	if len(cfg.SelectorSets) == 0 && len(cfg.Selectors) == 0 {
 		return nil, fmt.Errorf("spire config: at least one workload selector is required")
 	}
 
@@ -105,6 +109,8 @@ func (m *SpireIdentityManager) Close() error {
 }
 
 // RegisterWorkload registers a SPIFFE identity for a mesh service.
+// Each selector set is registered as a separate SPIRE entry per configured parent ID,
+// allowing workloads matching any selector set (e.g. Windows or Linux) to attest.
 func (m *SpireIdentityManager) RegisterWorkload(ctx context.Context, identity model.ServiceIdentity) error {
 	m.logger.Info("registering workload in SPIRE", "service", identity.ServiceID, "spiffeID", identity.SPIFFEID)
 
@@ -113,56 +119,65 @@ func (m *SpireIdentityManager) RegisterWorkload(ctx context.Context, identity mo
 		return fmt.Errorf("register workload: invalid spiffe ID %q: %w", identity.SPIFFEID, err)
 	}
 
-	selectorTemplates := m.cfg.Selectors
-	if len(identity.Selectors) > 0 {
-		selectorTemplates = identity.Selectors
+	selectorSetTemplates := identity.EffectiveSelectorSets()
+	if len(selectorSetTemplates) == 0 {
+		selectorSetTemplates = m.cfg.effectiveSelectorSets()
 	}
 
-	selectors, err := m.resolveSelectors(identity.ServiceID.Name, identity.ServiceID.Namespace, selectorTemplates)
+	resolvedSets, err := m.resolveSelectorSets(identity.ServiceID.Name, identity.ServiceID.Namespace, selectorSetTemplates)
 	if err != nil {
 		return fmt.Errorf("register workload: resolve selectors: %w", err)
 	}
 
-	// Register the workload for each configured parent ID
-	for _, parentIDStr := range m.cfg.ParentIDs {
-		parentID, err := parseSPIFFEID(parentIDStr)
-		if err != nil {
-			return fmt.Errorf("register workload: invalid parent ID %q: %w", parentIDStr, err)
-		}
+	desiredEntries, err := m.buildDesiredEntries(spiffeID, resolvedSets)
+	if err != nil {
+		return err
+	}
 
-		entry := &spiretypes.Entry{
-			SpiffeId:  spiffeID,
-			ParentId:  parentID,
-			Selectors: selectors,
-		}
+	listResp, err := m.client.ListEntries(ctx, &entryv1.ListEntriesRequest{
+		Filter: &entryv1.ListEntriesRequest_Filter{
+			BySpiffeId: spiffeID,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("register workload: list existing entries: %w", err)
+	}
 
+	toCreate, toDeleteIDs := diffEntries(desiredEntries, listResp.Entries)
+
+	if len(toCreate) > 0 {
 		req := &entryv1.BatchCreateEntryRequest{
-			Entries: []*spiretypes.Entry{entry},
+			Entries: toCreate,
 		}
-
-		m.logger.Debug("sending batch create entry request", "parentID", parentIDStr, "spiffeID", identity.SPIFFEID)
+		m.logger.Debug("sending batch create entry request", "count", len(toCreate), "spiffeID", identity.SPIFFEID)
 		resp, err := m.client.BatchCreateEntry(ctx, req)
 		if err != nil {
 			return fmt.Errorf("batch create entry call failed: %w", err)
 		}
-
 		if len(resp.Results) == 0 {
 			return fmt.Errorf("batch create entry call returned empty results")
 		}
 
-		res := resp.Results[0]
-		if res.Status.Code == int32(codes.AlreadyExists) {
-			m.logger.Debug("workload entry already exists in SPIRE", "parentID", parentIDStr, "spiffeID", identity.SPIFFEID)
-			continue
+		for i, res := range resp.Results {
+			parentStr := formatSPIFFEID(toCreate[i].ParentId)
+			if res.Status.Code == int32(codes.AlreadyExists) {
+				m.logger.Debug("workload entry already exists in SPIRE", "parentID", parentStr, "spiffeID", identity.SPIFFEID)
+				continue
+			}
+			if res.Status.Code != int32(codes.OK) {
+				return fmt.Errorf("failed to register workload in SPIRE (parent: %s): code=%d message=%s",
+					parentStr, res.Status.Code, res.Status.Message)
+			}
+			m.logger.Info("successfully registered workload in SPIRE",
+				"entryID", res.Entry.Id, "parentID", parentStr, "spiffeID", identity.SPIFFEID)
 		}
+	}
 
-		if res.Status.Code != int32(codes.OK) {
-			return fmt.Errorf("failed to register workload in SPIRE (parent: %s): code=%d message=%s",
-				parentIDStr, res.Status.Code, res.Status.Message)
+	if len(toDeleteIDs) > 0 {
+		m.logger.Info("removing stale spire entries", "count", len(toDeleteIDs), "spiffeID", identity.SPIFFEID)
+		if err := m.deleteEntriesByID(ctx, toDeleteIDs); err != nil {
+			return fmt.Errorf("register workload: %w", err)
 		}
-
-		m.logger.Info("successfully registered workload in SPIRE",
-			"entryID", res.Entry.Id, "parentID", parentIDStr, "spiffeID", identity.SPIFFEID)
 	}
 
 	return nil
@@ -200,11 +215,16 @@ func (m *SpireIdentityManager) DeregisterWorkload(ctx context.Context, serviceID
 	}
 
 	m.logger.Info("deleting spire entries", "count", len(entryIDs), "spiffeID", spiffeIDStr)
-	delReq := &entryv1.BatchDeleteEntryRequest{
-		Ids: entryIDs,
+	if err := m.deleteEntriesByID(ctx, entryIDs); err != nil {
+		return err
 	}
 
-	delResp, err := m.client.BatchDeleteEntry(ctx, delReq)
+	m.logger.Info("successfully deregistered workload from SPIRE", "spiffeID", spiffeIDStr)
+	return nil
+}
+
+func (m *SpireIdentityManager) deleteEntriesByID(ctx context.Context, entryIDs []string) error {
+	delResp, err := m.client.BatchDeleteEntry(ctx, &entryv1.BatchDeleteEntryRequest{Ids: entryIDs})
 	if err != nil {
 		return fmt.Errorf("batch delete entry call failed: %w", err)
 	}
@@ -215,9 +235,106 @@ func (m *SpireIdentityManager) DeregisterWorkload(ctx context.Context, serviceID
 				res.Id, res.Status.Code, res.Status.Message)
 		}
 	}
-
-	m.logger.Info("successfully deregistered workload from SPIRE", "spiffeID", spiffeIDStr)
 	return nil
+}
+
+func (m *SpireIdentityManager) buildDesiredEntries(spiffeID *spiretypes.SPIFFEID, resolvedSets [][]*spiretypes.Selector) ([]*spiretypes.Entry, error) {
+	var desired []*spiretypes.Entry
+	for _, parentIDStr := range m.cfg.ParentIDs {
+		parentID, err := parseSPIFFEID(parentIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("register workload: invalid parent ID %q: %w", parentIDStr, err)
+		}
+		for _, selectors := range resolvedSets {
+			candidate := &spiretypes.Entry{
+				SpiffeId:  spiffeID,
+				ParentId:  parentID,
+				Selectors: selectors,
+			}
+			duplicate := false
+			for _, existing := range desired {
+				if entriesMatch(existing, candidate) {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				desired = append(desired, candidate)
+			}
+		}
+	}
+	return desired, nil
+}
+
+func diffEntries(desired, existing []*spiretypes.Entry) (toCreate []*spiretypes.Entry, toDeleteIDs []string) {
+	for _, d := range desired {
+		found := false
+		for _, e := range existing {
+			if entriesMatch(d, e) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			toCreate = append(toCreate, d)
+		}
+	}
+
+	for _, e := range existing {
+		keep := false
+		for _, d := range desired {
+			if entriesMatch(d, e) {
+				keep = true
+				break
+			}
+		}
+		if !keep {
+			toDeleteIDs = append(toDeleteIDs, e.Id)
+		}
+	}
+
+	return toCreate, toDeleteIDs
+}
+
+func entriesMatch(a, b *spiretypes.Entry) bool {
+	return spiffeIDsEqual(a.SpiffeId, b.SpiffeId) &&
+		spiffeIDsEqual(a.ParentId, b.ParentId) &&
+		selectorsEqual(a.Selectors, b.Selectors)
+}
+
+func spiffeIDsEqual(a, b *spiretypes.SPIFFEID) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.TrustDomain == b.TrustDomain && a.Path == b.Path
+}
+
+func selectorsEqual(a, b []*spiretypes.Selector) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	used := make([]bool, len(b))
+	for _, sa := range a {
+		matched := false
+		for j, sb := range b {
+			if !used[j] && sa.Type == sb.Type && sa.Value == sb.Value {
+				used[j] = true
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+func formatSPIFFEID(id *spiretypes.SPIFFEID) string {
+	if id == nil {
+		return ""
+	}
+	return "spiffe://" + id.TrustDomain + id.Path
 }
 
 // dialSpire establishes a gRPC connection to SPIRE Server.
@@ -352,6 +469,54 @@ func NewServerCredentials(ctx context.Context, agentAddr, trustDomain string) (c
 	creds := credentials.NewTLS(tlsCfg)
 
 	return creds, source, nil
+}
+
+func (c Config) effectiveSelectorSets() [][]string {
+	if len(c.SelectorSets) > 0 {
+		return c.SelectorSets
+	}
+	if len(c.Selectors) > 0 {
+		return [][]string{c.Selectors}
+	}
+	return nil
+}
+
+// ParseSelectorSets parses a semicolon-delimited list of comma-delimited selector
+// templates (e.g. "windows:user:app,windows:sha256:abc;unix:user:app,unix:pid:1").
+func ParseSelectorSets(raw string) [][]string {
+	var sets [][]string
+	for _, rawSet := range strings.Split(raw, ";") {
+		var set []string
+		for _, sel := range strings.Split(rawSet, ",") {
+			trimmed := strings.TrimSpace(sel)
+			if trimmed != "" {
+				set = append(set, trimmed)
+			}
+		}
+		if len(set) > 0 {
+			sets = append(sets, set)
+		}
+	}
+	return sets
+}
+
+func (m *SpireIdentityManager) resolveSelectorSets(name, namespace string, selectorSetTemplates [][]string) ([][]*spiretypes.Selector, error) {
+	if len(selectorSetTemplates) == 0 {
+		return nil, fmt.Errorf("at least one selector set is required")
+	}
+
+	resolved := make([][]*spiretypes.Selector, 0, len(selectorSetTemplates))
+	for i, tplSet := range selectorSetTemplates {
+		selectors, err := m.resolveSelectors(name, namespace, tplSet)
+		if err != nil {
+			return nil, fmt.Errorf("selector set %d: %w", i, err)
+		}
+		if len(selectors) == 0 {
+			return nil, fmt.Errorf("selector set %d resolved to no selectors", i)
+		}
+		resolved = append(resolved, selectors)
+	}
+	return resolved, nil
 }
 
 // resolveSelectors processes selector templates and produces selectors for workload.

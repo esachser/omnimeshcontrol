@@ -59,6 +59,9 @@ func (s *ServiceAppService) Apply(ctx context.Context, service *model.Service) e
 	if service.ID.Namespace == "" {
 		return fmt.Errorf("service apply: %w: namespace is required", domain.ErrInvalidNamespace)
 	}
+	if err := service.ValidateSelectors(); err != nil {
+		return fmt.Errorf("service apply: %w: %w", domain.ErrInvalidSelectors, err)
+	}
 
 	// Get namespace (validates existence + provides CIDR for IP allocation).
 	ns, err := s.namespaces.Get(ctx, service.ID.Namespace)
@@ -83,9 +86,10 @@ func (s *ServiceAppService) Apply(ctx context.Context, service *model.Service) e
 	if s.identity != nil {
 		spiffeID := fmt.Sprintf("spiffe://%s/ns/%s/sa/%s", s.dnsZone, service.ID.Namespace, service.ID.Name)
 		identity := model.ServiceIdentity{
-			SPIFFEID:  spiffeID,
-			ServiceID: service.ID,
-			Selectors: service.Selectors,
+			SPIFFEID:     spiffeID,
+			ServiceID:    service.ID,
+			Selectors:    service.Selectors,
+			SelectorSets: service.SelectorSets,
 		}
 		if err := s.identity.RegisterWorkload(ctx, identity); err != nil {
 			return fmt.Errorf("service apply: register identity: %w", err)

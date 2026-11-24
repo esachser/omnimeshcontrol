@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"reflect"
 	"testing"
 
 	"github.com/esachser/omnimeshcontrol/internal/application/apptest"
@@ -85,6 +86,86 @@ func TestServiceAppService_Apply(t *testing.T) {
 	}
 	if len(registeredID.Selectors) != 2 || registeredID.Selectors[0] != "windows:process-name:orders.exe" {
 		t.Errorf("registered selectors = %v, want %v", registeredID.Selectors, svc.Selectors)
+	}
+}
+
+func TestServiceAppService_Apply_SelectorSets(t *testing.T) {
+	app, resources, _, _, identity := newTestServiceApp(t)
+	ctx := context.Background()
+
+	nsApp := namespace.NewNamespaceAppService(resources, svcTestCIDR, nil)
+	if err := nsApp.Apply(ctx, &model.Namespace{Name: "production"}); err != nil {
+		t.Fatalf("namespace apply: %v", err)
+	}
+
+	svc := &model.Service{
+		ID:       model.ServiceID{Namespace: "production", Name: "cross-platform-api"},
+		Protocol: model.ServiceProtocolGRPC,
+		Port:     50051,
+		SelectorSets: [][]string{
+			{"windows:user_sid:S-1-5-21-1001", "windows:sha256:abcdef"},
+			{"unix:user:api", "unix:pid:4321"},
+		},
+	}
+
+	if err := app.Apply(ctx, svc); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	registeredID, ok := identity.Identities[svc.ID.String()]
+	if !ok {
+		t.Fatalf("identity was not registered in IdentityManager")
+	}
+	if !reflect.DeepEqual(registeredID.SelectorSets, svc.SelectorSets) {
+		t.Errorf("registered selectorSets = %v, want %v", registeredID.SelectorSets, svc.SelectorSets)
+	}
+
+	got, err := app.Get(ctx, "production", "cross-platform-api")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if !reflect.DeepEqual(got.SelectorSets, svc.SelectorSets) {
+		t.Errorf("persisted selectorSets = %v, want %v", got.SelectorSets, svc.SelectorSets)
+	}
+}
+
+func TestServiceAppService_Apply_InvalidSelectors(t *testing.T) {
+	app, resources, _, _, _ := newTestServiceApp(t)
+	ctx := context.Background()
+
+	nsApp := namespace.NewNamespaceAppService(resources, svcTestCIDR, nil)
+	if err := nsApp.Apply(ctx, &model.Namespace{Name: "production"}); err != nil {
+		t.Fatalf("namespace apply: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		svc  *model.Service
+	}{
+		{
+			name: "empty selector set",
+			svc: &model.Service{
+				ID:           model.ServiceID{Namespace: "production", Name: "bad-svc-1"},
+				SelectorSets: [][]string{{"windows:user_sid:S-1"}, {}},
+			},
+		},
+		{
+			name: "both selectors and selectorSets",
+			svc: &model.Service{
+				ID:           model.ServiceID{Namespace: "production", Name: "bad-svc-2"},
+				Selectors:    []string{"unix:user:app"},
+				SelectorSets: [][]string{{"windows:user_sid:S-1"}},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := app.Apply(ctx, tc.svc)
+			if !errors.Is(err, domain.ErrInvalidSelectors) {
+				t.Errorf("Apply() error = %v, want errors.Is(ErrInvalidSelectors)", err)
+			}
+		})
 	}
 }
 

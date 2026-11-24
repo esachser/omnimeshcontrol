@@ -228,8 +228,36 @@ func TestScopeToProto_IncludesServiceSelectors(t *testing.T) {
 	if info.Name != "api" || info.Namespace != "default" {
 		t.Errorf("service identity = %s/%s, want default/api", info.Namespace, info.Name)
 	}
-	if len(info.Selectors) != 2 || info.Selectors[0] != "windows:process-name:api.exe" || info.Selectors[1] != "unix:uid:1000" {
-		t.Errorf("service selectors = %v, want %v", info.Selectors, svc.Selectors)
+	if len(info.SelectorSets) != 1 || len(info.SelectorSets[0].Selectors) != 2 || info.SelectorSets[0].Selectors[0] != "windows:process-name:api.exe" || info.SelectorSets[0].Selectors[1] != "unix:uid:1000" {
+		t.Errorf("service selector_sets = %v, want 1 set matching %v", info.SelectorSets, svc.Selectors)
+	}
+}
+
+func TestScopeToProto_IncludesServiceSelectorSets(t *testing.T) {
+	svc := model.Service{
+		ID:       model.ServiceID{Namespace: "prod", Name: "orders"},
+		Protocol: model.ServiceProtocolGRPC,
+		Port:     50051,
+		SelectorSets: [][]string{
+			{"windows:user_sid:S-1-5-21-1001", "windows:sha256:deadbeef"},
+			{"unix:user:orders", "unix:pid:4321"},
+		},
+	}
+
+	snapshot := scopeToProto(&model.AgentScope{Services: []model.Service{svc}})
+	if len(snapshot.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(snapshot.Services))
+	}
+
+	info := snapshot.Services[0]
+	if len(info.SelectorSets) != 2 {
+		t.Fatalf("expected 2 selector sets, got %d", len(info.SelectorSets))
+	}
+	if info.SelectorSets[0].Selectors[0] != "windows:user_sid:S-1-5-21-1001" || info.SelectorSets[0].Selectors[1] != "windows:sha256:deadbeef" {
+		t.Errorf("selector_sets[0] = %v, want Windows set", info.SelectorSets[0].Selectors)
+	}
+	if info.SelectorSets[1].Selectors[0] != "unix:user:orders" || info.SelectorSets[1].Selectors[1] != "unix:pid:4321" {
+		t.Errorf("selector_sets[1] = %v, want Linux set", info.SelectorSets[1].Selectors)
 	}
 }
 
@@ -252,8 +280,8 @@ func TestScopeUpdateToProto_IncludesServiceSelectors(t *testing.T) {
 	}
 
 	info := protoUpdate.Services[0]
-	if len(info.Selectors) != 1 || info.Selectors[0] != "windows:path:C:\\apps\\payment.exe" {
-		t.Errorf("update service selectors = %v, want %v", info.Selectors, svc.Selectors)
+	if len(info.SelectorSets) != 1 || len(info.SelectorSets[0].Selectors) != 1 || info.SelectorSets[0].Selectors[0] != "windows:path:C:\\apps\\payment.exe" {
+		t.Errorf("update service selector_sets = %v, want 1 set matching %v", info.SelectorSets, svc.Selectors)
 	}
 }
 

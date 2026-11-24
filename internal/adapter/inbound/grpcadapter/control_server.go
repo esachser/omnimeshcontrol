@@ -80,38 +80,26 @@ func (s *ControlPlaneServer) applyService(ctx context.Context, r *omnimeshv1.Res
 		return nil, status.Error(codes.InvalidArgument, "metadata is required")
 	}
 
-	// Parse spec.
-	var spec struct {
-		Protocol  string   `json:"protocol"`
-		Port      int      `json:"port"`
-		Selectors []string `json:"selectors,omitempty"`
-	}
-	if len(r.Spec) > 0 {
-		if err := json.Unmarshal(r.Spec, &spec); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid spec: %v", err)
-		}
-	}
-
-	svc := &model.Service{
-		ID: model.ServiceID{
-			Namespace: r.Metadata.Namespace,
+	resource := &model.Resource{
+		APIVersion: r.ApiVersion,
+		Kind:       r.Kind,
+		Metadata: model.ResourceMetadata{
 			Name:      r.Metadata.Name,
+			Namespace: r.Metadata.Namespace,
+			Labels:    r.Metadata.Labels,
 		},
-		Labels:    r.Metadata.Labels,
-		Port:      spec.Port,
-		Selectors: spec.Selectors,
+		Spec: r.Spec,
 	}
 
-	switch spec.Protocol {
-	case "HTTP":
-		svc.Protocol = model.ServiceProtocolHTTP
-	case "gRPC":
-		svc.Protocol = model.ServiceProtocolGRPC
-	default:
-		svc.Protocol = model.ServiceProtocolTCP
+	svc, err := mapper.ResourceToService(resource)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid spec: %v", err)
 	}
 
 	if err := s.services.Apply(ctx, svc); err != nil {
+		if errors.Is(err, domain.ErrInvalidSelectors) || errors.Is(err, domain.ErrInvalidName) || errors.Is(err, domain.ErrInvalidNamespace) {
+			return nil, status.Errorf(codes.InvalidArgument, "apply service: %v", err)
+		}
 		return nil, status.Errorf(codes.Internal, "apply service: %v", err)
 	}
 
@@ -435,6 +423,9 @@ func serviceToProto(svc *model.Service) *omnimeshv1.Resource {
 	}
 	if len(svc.Selectors) > 0 {
 		spec["selectors"] = svc.Selectors
+	}
+	if len(svc.SelectorSets) > 0 {
+		spec["selectorSets"] = svc.SelectorSets
 	}
 	if svc.MeshAddr.IsValid() {
 		spec["meshAddr"] = svc.MeshAddr.String()

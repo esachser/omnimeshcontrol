@@ -69,7 +69,26 @@ type Service struct {
 	Labels       map[string]string
 	Dependencies []ServiceID
 	Port         int
-	Selectors    []string
+	// Selectors defines a single set of workload selectors (deprecated: use SelectorSets).
+	Selectors []string
+	// SelectorSets defines one or more independent sets of workload selectors.
+	// Selectors within a set must all match simultaneously (logical AND), while
+	// multiple sets act as alternatives (logical OR), e.g. one set for Windows
+	// and another for Linux.
+	SelectorSets [][]string
+}
+
+// EffectiveSelectorSets returns the normalized list of selector sets for this
+// service. If SelectorSets is populated, it is returned; otherwise Selectors is
+// returned as a single selector set when non-empty.
+func (s Service) EffectiveSelectorSets() [][]string {
+	return effectiveSelectorSets(s.SelectorSets, s.Selectors)
+}
+
+// ValidateSelectors validates that any configured workload selectors and
+// selector sets are non-empty and well-formed.
+func (s Service) ValidateSelectors() error {
+	return validateSelectorSets(s.SelectorSets, s.Selectors)
 }
 
 // EndpointHealthStatus indicates the health of a service endpoint.

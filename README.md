@@ -216,9 +216,11 @@ spec:
   target: us-east-1
   protocol: gRPC
   port: 50051
-  selectors:
-    - windows:process-name:payment-service.exe
-    - unix:user:payment
+  selectorSets:
+    - - windows:user_sid:S-1-5-21-...
+      - windows:sha256:abcdef...
+    - - unix:user:payment
+      - unix:pid:1234
 ```
 
 #### 3. TrafficPolicy (`trafficpolicy-order.yaml`)
@@ -476,7 +478,8 @@ If you prefer running components in dedicated terminals:
 | `OMNIMESH_SPIRE_AGENT_ADDR` | `\\spire-agent\public\api` *(Win)*<br/>`unix:///tmp/...` *(Unix)* | Address to SPIRE Agent Workload API for fetching SVIDs. |
 | `OMNIMESH_SPIRE_TRUST_DOMAIN`| `omnimesh.local` | SPIFFE trust domain name. |
 | `OMNIMESH_SPIRE_PARENT_IDS` | `spiffe://omnimesh.local/agents/dev-agent` | Authorized parent SPIFFE IDs for workload registration. |
-| `OMNIMESH_SPIRE_SELECTORS` | `windows:process-name:{{.Name}}.exe,unix:user:{{.Name}}` | Default templated workload attestation selectors. |
+| `OMNIMESH_SPIRE_SELECTORS` | `windows:process-name:{{.Name}}.exe;unix:user:{{.Name}}` | Default templated workload attestation selector sets (`;` separates sets, `,` separates AND-ed selectors). |
+| `OMNIMESH_SPIRE_SELECTOR_SETS` | *(unset)* | Explicit override for default selector sets (`;` separates sets, `,` separates selectors). |
 
 ---
 

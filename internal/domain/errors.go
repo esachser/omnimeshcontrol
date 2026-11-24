@@ -81,4 +81,6 @@ var (
 	ErrInvalidName = errors.New("invalid resource name")
 	// ErrInvalidNamespace indicates a namespace reference is invalid.
 	ErrInvalidNamespace = errors.New("invalid namespace")
+	// ErrInvalidSelectors indicates an invalid workload selector or selector set configuration.
+	ErrInvalidSelectors = errors.New("invalid workload selectors")
 )

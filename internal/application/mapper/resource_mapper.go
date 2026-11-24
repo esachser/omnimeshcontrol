@@ -1,6 +1,7 @@
 package mapper
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/netip"
@@ -11,18 +12,28 @@ import (
 
 // serviceSpec is the JSON spec representation for Service resources.
 type serviceSpec struct {
-	Protocol     string   `json:"protocol,omitempty"`
-	Port         int      `json:"port,omitempty"`
-	Dependencies []string `json:"dependencies,omitempty"`
-	Selectors    []string `json:"selectors,omitempty"`
+	Protocol     string     `json:"protocol,omitempty"`
+	Port         int        `json:"port,omitempty"`
+	Dependencies []string   `json:"dependencies,omitempty"`
+	Selectors    []string   `json:"selectors,omitempty"`
+	SelectorSets [][]string `json:"selectorSets,omitempty"`
+}
+
+type rawServiceSpec struct {
+	Protocol     string          `json:"protocol,omitempty"`
+	Port         int             `json:"port,omitempty"`
+	Dependencies []string        `json:"dependencies,omitempty"`
+	Selectors    json.RawMessage `json:"selectors,omitempty"`
+	SelectorSets json.RawMessage `json:"selectorSets,omitempty"`
 }
 
 // ServiceToResource converts a domain Service to a generic Resource for storage.
 func ServiceToResource(svc *model.Service) *model.Resource {
 	spec := serviceSpec{
-		Protocol:  svc.Protocol.String(),
-		Port:      svc.Port,
-		Selectors: svc.Selectors,
+		Protocol:     svc.Protocol.String(),
+		Port:         svc.Port,
+		Selectors:    svc.Selectors,
+		SelectorSets: svc.SelectorSets,
 	}
 	for _, dep := range svc.Dependencies {
 		spec.Dependencies = append(spec.Dependencies, dep.String())
@@ -48,7 +59,7 @@ func ResourceToService(r *model.Resource) (*model.Service, error) {
 		return nil, fmt.Errorf("expected kind Service, got %s", r.Kind)
 	}
 
-	var spec serviceSpec
+	var spec rawServiceSpec
 	if len(r.Spec) > 0 {
 		if err := json.Unmarshal(r.Spec, &spec); err != nil {
 			return nil, fmt.Errorf("unmarshal service spec: %w", err)
@@ -60,9 +71,12 @@ func ResourceToService(r *model.Resource) (*model.Service, error) {
 			Namespace: r.Metadata.Namespace,
 			Name:      r.Metadata.Name,
 		},
-		Labels:    r.Metadata.Labels,
-		Port:      spec.Port,
-		Selectors: spec.Selectors,
+		Labels: r.Metadata.Labels,
+		Port:   spec.Port,
+	}
+
+	if err := decodeServiceSelectors(&spec, svc); err != nil {
+		return nil, err
 	}
 
 	switch spec.Protocol {
@@ -75,6 +89,67 @@ func ResourceToService(r *model.Resource) (*model.Service, error) {
 	}
 
 	return svc, nil
+}
+
+func decodeServiceSelectors(spec *rawServiceSpec, svc *model.Service) error {
+	if len(spec.SelectorSets) > 0 && !bytes.Equal(bytes.TrimSpace(spec.SelectorSets), []byte("null")) {
+		sets, err := decodeSelectorSets(spec.SelectorSets)
+		if err != nil {
+			return fmt.Errorf("unmarshal service selectorSets: %w", err)
+		}
+		svc.SelectorSets = sets
+	}
+
+	if len(spec.Selectors) > 0 && !bytes.Equal(bytes.TrimSpace(spec.Selectors), []byte("null")) {
+		var flat []string
+		if err := json.Unmarshal(spec.Selectors, &flat); err == nil {
+			svc.Selectors = flat
+			return nil
+		}
+
+		// Also accept nested selector sets under "selectors" if selectorSets was not already provided.
+		if len(svc.SelectorSets) == 0 {
+			if sets, err := decodeSelectorSets(spec.Selectors); err == nil {
+				svc.SelectorSets = sets
+				return nil
+			}
+		}
+		return fmt.Errorf("unmarshal service selectors: expected string list or list of selector sets")
+	}
+
+	return nil
+}
+
+func decodeSelectorSets(raw json.RawMessage) ([][]string, error) {
+	var elems []json.RawMessage
+	if err := json.Unmarshal(raw, &elems); err != nil {
+		return nil, err
+	}
+
+	sets := make([][]string, 0, len(elems))
+	for i, elem := range elems {
+		trimmed := bytes.TrimSpace(elem)
+		switch {
+		case bytes.HasPrefix(trimmed, []byte("[")):
+			var set []string
+			if err := json.Unmarshal(trimmed, &set); err != nil {
+				return nil, fmt.Errorf("index %d: %w", i, err)
+			}
+			sets = append(sets, set)
+		case bytes.HasPrefix(trimmed, []byte("{")):
+			var obj struct {
+				Selectors []string `json:"selectors"`
+			}
+			if err := json.Unmarshal(trimmed, &obj); err != nil {
+				return nil, fmt.Errorf("index %d: %w", i, err)
+			}
+			sets = append(sets, obj.Selectors)
+		default:
+			return nil, fmt.Errorf("index %d: expected array of selectors or {selectors: [...]}", i)
+		}
+	}
+
+	return sets, nil
 }
 
 // namespaceSpec is the JSON spec representation for Namespace resources.

@@ -109,13 +109,17 @@ message NamespaceInfo {
   map<string, string> labels = 5;
 }
 
+message SelectorSet {
+  repeated string selectors = 1;
+}
+
 message ServiceInfo {
   string namespace = 1;
   string name = 2;
   string protocol = 3;
   string mesh_addr = 4;
   int32 port = 5;
-  repeated string selectors = 6;
+  repeated SelectorSet selector_sets = 6;
 }
 
 message RouteInfo {

@@ -79,14 +79,7 @@ func ResourceToService(r *model.Resource) (*model.Service, error) {
 		return nil, err
 	}
 
-	switch spec.Protocol {
-	case "HTTP":
-		svc.Protocol = model.ServiceProtocolHTTP
-	case "gRPC":
-		svc.Protocol = model.ServiceProtocolGRPC
-	default:
-		svc.Protocol = model.ServiceProtocolTCP
-	}
+	svc.Protocol = model.NormalizeServiceProtocol(spec.Protocol)
 
 	return svc, nil
 }

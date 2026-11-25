@@ -58,6 +58,61 @@ func TestPolicyValidator_Validate(t *testing.T) {
 			wantErr:  true,
 		},
 		{
+			name: "5xx retry rejected on Auto",
+			policy: &model.TrafficPolicy{
+				Retry: &model.RetryPolicy{
+					MaxRetries: 2,
+					RetryOn:    []string{"5xx"},
+				},
+			},
+			protocol: model.ServiceProtocolAuto,
+			wantErr:  true,
+		},
+		{
+			name: "connection-failure retry allowed on Auto",
+			policy: &model.TrafficPolicy{
+				Retry: &model.RetryPolicy{
+					MaxRetries: 2,
+					RetryOn:    []string{"connection-failure"},
+				},
+			},
+			protocol: model.ServiceProtocolAuto,
+			wantErr:  false,
+		},
+		{
+			name: "valid retry for HTTP1",
+			policy: &model.TrafficPolicy{
+				Retry: &model.RetryPolicy{
+					MaxRetries: 2,
+					RetryOn:    []string{"5xx"},
+				},
+			},
+			protocol: model.ServiceProtocolHTTP1,
+			wantErr:  false,
+		},
+		{
+			name: "valid retry for HTTP2",
+			policy: &model.TrafficPolicy{
+				Retry: &model.RetryPolicy{
+					MaxRetries: 2,
+					RetryOn:    []string{"5xx"},
+				},
+			},
+			protocol: model.ServiceProtocolHTTP2,
+			wantErr:  false,
+		},
+		{
+			name: "valid retry for gRPC",
+			policy: &model.TrafficPolicy{
+				Retry: &model.RetryPolicy{
+					MaxRetries: 2,
+					RetryOn:    []string{"5xx"},
+				},
+			},
+			protocol: model.ServiceProtocolGRPC,
+			wantErr:  false,
+		},
+		{
 			name: "negative MaxRetries rejected",
 			policy: &model.TrafficPolicy{
 				Retry: &model.RetryPolicy{

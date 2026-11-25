@@ -68,6 +68,48 @@ func TestServiceUpdateService_Run_BroadcastsOnPut(t *testing.T) {
 	if len(u.Services) != 1 || u.Services[0].ID.Name != "order-service" {
 		t.Errorf("unexpected broadcast services: %v", u.Services)
 	}
+	if u.Services[0].Protocol != model.ServiceProtocolHTTP {
+		t.Errorf("broadcast protocol = %v, want ServiceProtocolHTTP", u.Services[0].Protocol)
+	}
+}
+
+func TestServiceUpdateService_Run_NormalizesServiceProtocol(t *testing.T) {
+	resources := newMockWatchableResourceStore()
+	state := apptest.NewMockStateStore()
+	dist := apptest.NewMockScopeDistributor()
+
+	svc := newServiceUpdateService(resources, state, dist)
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() { done <- svc.Run(ctx) }()
+
+	resources.watchCh <- outbound.ResourceEvent{
+		Type: outbound.ResourceEventPut,
+		Key:  serviceResourcePrefix + "production/h2c-service",
+		Resource: &model.Resource{
+			APIVersion: "core.omnimesh.io/v1",
+			Kind:       "Service",
+			Metadata: model.ResourceMetadata{
+				Name:      "h2c-service",
+				Namespace: "production",
+			},
+			Spec: []byte(`{"protocol":"h2c","port":8080}`),
+		},
+	}
+	close(resources.watchCh)
+
+	if err := <-done; err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+
+	broadcasts := dist.GetBroadcasts()
+	if len(broadcasts) != 1 || len(broadcasts[0].Services) != 1 {
+		t.Fatalf("expected 1 broadcast with 1 service, got %+v", broadcasts)
+	}
+	if got := broadcasts[0].Services[0].Protocol.AgentProtocol(); got != "http2" {
+		t.Errorf("AgentProtocol() = %q, want http2", got)
+	}
 }
 
 func TestServiceUpdateService_Run_BroadcastsOnDelete(t *testing.T) {

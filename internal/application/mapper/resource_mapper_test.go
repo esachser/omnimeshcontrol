@@ -278,3 +278,54 @@ func TestNamespaceToResource_And_ResourceToNamespace_WithSubnets(t *testing.T) {
 		}
 	}
 }
+
+func TestResourceToService_ProtocolNormalization(t *testing.T) {
+	tests := []struct {
+		name         string
+		rawProtocol  string
+		wantProtocol model.ServiceProtocol
+	}{
+		{name: "empty defaults to auto", rawProtocol: "", wantProtocol: model.ServiceProtocolAuto},
+		{name: "auto", rawProtocol: "auto", wantProtocol: model.ServiceProtocolAuto},
+		{name: "tcp", rawProtocol: "TCP", wantProtocol: model.ServiceProtocolTCP},
+		{name: "http lowercase", rawProtocol: "http", wantProtocol: model.ServiceProtocolHTTP},
+		{name: "http1.1 with spaces", rawProtocol: " HTTP/1.1 ", wantProtocol: model.ServiceProtocolHTTP1},
+		{name: "http/1.0", rawProtocol: "http/1.0", wantProtocol: model.ServiceProtocolHTTP1},
+		{name: "http1.1", rawProtocol: "http1.1", wantProtocol: model.ServiceProtocolHTTP1},
+		{name: "http2", rawProtocol: "http2", wantProtocol: model.ServiceProtocolHTTP2},
+		{name: "http/2", rawProtocol: "http/2", wantProtocol: model.ServiceProtocolHTTP2},
+		{name: "h2c", rawProtocol: "h2c", wantProtocol: model.ServiceProtocolHTTP2},
+		{name: "grpc-web", rawProtocol: "grpc-web", wantProtocol: model.ServiceProtocolHTTP2},
+		{name: "grpc mixed case", rawProtocol: "gRPC", wantProtocol: model.ServiceProtocolGRPC},
+		{name: "grpc lowercase", rawProtocol: "grpc", wantProtocol: model.ServiceProtocolGRPC},
+		{name: "unknown falls back to auto", rawProtocol: "mysql", wantProtocol: model.ServiceProtocolAuto},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := &model.Resource{
+				Kind: "Service",
+				Metadata: model.ResourceMetadata{
+					Name:      "svc",
+					Namespace: "production",
+				},
+				Spec: []byte(`{"protocol":"` + tc.rawProtocol + `","port":8080}`),
+			}
+			svc, err := ResourceToService(res)
+			if err != nil {
+				t.Fatalf("ResourceToService() error = %v", err)
+			}
+			if svc.Protocol != tc.wantProtocol {
+				t.Errorf("Protocol = %v, want %v", svc.Protocol, tc.wantProtocol)
+			}
+
+			roundTrip, err := ResourceToService(ServiceToResource(svc))
+			if err != nil {
+				t.Fatalf("round-trip ResourceToService() error = %v", err)
+			}
+			if roundTrip.Protocol != tc.wantProtocol {
+				t.Errorf("round-trip Protocol = %v, want %v", roundTrip.Protocol, tc.wantProtocol)
+			}
+		})
+	}
+}

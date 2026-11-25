@@ -138,3 +138,76 @@ func TestControlPlaneServer_ApplyService_InvalidSelectorSets(t *testing.T) {
 		t.Errorf("ApplyResource() status code = %v, want InvalidArgument (err=%v)", status.Code(err), err)
 	}
 }
+
+func TestControlPlaneServer_ApplyAndGetService_ProtocolVariants(t *testing.T) {
+	tests := []struct {
+		name         string
+		rawProtocol  string
+		wantProtocol string
+	}{
+		{name: "empty defaults to auto", rawProtocol: "", wantProtocol: "auto"},
+		{name: "auto", rawProtocol: "auto", wantProtocol: "auto"},
+		{name: "tcp", rawProtocol: "tcp", wantProtocol: "TCP"},
+		{name: "http", rawProtocol: "http", wantProtocol: "HTTP"},
+		{name: "http/1.1", rawProtocol: "http/1.1", wantProtocol: "http1"},
+		{name: "h2c", rawProtocol: "h2c", wantProtocol: "http2"},
+		{name: "grpc-web", rawProtocol: "grpc-web", wantProtocol: "http2"},
+		{name: "gRPC", rawProtocol: "gRPC", wantProtocol: "gRPC"},
+		{name: "unknown defaults to auto", rawProtocol: "redis", wantProtocol: "auto"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newTestControlPlaneServer(t)
+			ctx := context.Background()
+
+			specBytes, err := json.Marshal(map[string]any{
+				"protocol": tc.rawProtocol,
+				"port":     8080,
+			})
+			if err != nil {
+				t.Fatalf("marshal spec: %v", err)
+			}
+
+			applyResp, err := srv.ApplyResource(ctx, &omnimeshv1.ApplyResourceRequest{
+				Resource: &omnimeshv1.Resource{
+					ApiVersion: "core.omnimesh.io/v1",
+					Kind:       "Service",
+					Metadata: &omnimeshv1.ResourceMetadata{
+						Name:      "test-svc",
+						Namespace: "production",
+					},
+					Spec: specBytes,
+				},
+			})
+			if err != nil {
+				t.Fatalf("ApplyResource() error = %v", err)
+			}
+
+			var respSpec struct {
+				Protocol string `json:"protocol"`
+			}
+			if err := json.Unmarshal(applyResp.Resource.Spec, &respSpec); err != nil {
+				t.Fatalf("unmarshal apply spec: %v", err)
+			}
+			if respSpec.Protocol != tc.wantProtocol {
+				t.Errorf("apply response protocol = %q, want %q", respSpec.Protocol, tc.wantProtocol)
+			}
+
+			getResp, err := srv.GetResource(ctx, &omnimeshv1.GetResourceRequest{
+				Kind:      "Service",
+				Namespace: "production",
+				Name:      "test-svc",
+			})
+			if err != nil {
+				t.Fatalf("GetResource() error = %v", err)
+			}
+			if err := json.Unmarshal(getResp.Resource.Spec, &respSpec); err != nil {
+				t.Fatalf("unmarshal get spec: %v", err)
+			}
+			if respSpec.Protocol != tc.wantProtocol {
+				t.Errorf("get response protocol = %q, want %q", respSpec.Protocol, tc.wantProtocol)
+			}
+		})
+	}
+}

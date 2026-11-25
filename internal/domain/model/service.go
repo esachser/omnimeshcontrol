@@ -30,34 +30,90 @@ func ParseServiceID(s string) (ServiceID, error) {
 }
 
 // ServiceProtocol indicates the application protocol of a service.
-// This determines which traffic policy features are available.
+// This determines which traffic policy features are available and how
+// data plane agents handle traffic for the service.
 type ServiceProtocol int
 
 const (
-	// ServiceProtocolTCP is the default, lowest-common-denominator protocol.
-	ServiceProtocolTCP ServiceProtocol = iota
-	// ServiceProtocolHTTP indicates an HTTP service (L7 features available).
+	// ServiceProtocolAuto is the default protocol (agents auto-detect HTTP vs TCP).
+	ServiceProtocolAuto ServiceProtocol = iota
+	// ServiceProtocolTCP indicates a raw L4 TCP service.
+	ServiceProtocolTCP
+	// ServiceProtocolHTTP indicates a generic HTTP service (L7 features available).
 	ServiceProtocolHTTP
-	// ServiceProtocolGRPC indicates a gRPC service (L7 features available).
+	// ServiceProtocolHTTP1 indicates an HTTP/1.0 or HTTP/1.1 service (L7 features available).
+	ServiceProtocolHTTP1
+	// ServiceProtocolHTTP2 indicates an HTTP/2 service (including h2c and gRPC-Web; L7 features available).
+	ServiceProtocolHTTP2
+	// ServiceProtocolGRPC indicates a gRPC service (L7 features available; HTTP/2 on the wire).
 	ServiceProtocolGRPC
 )
+
+// NormalizeServiceProtocol parses a raw protocol string into a ServiceProtocol
+// using the same normalization rules as data plane agents.
+func NormalizeServiceProtocol(raw string) ServiceProtocol {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "auto":
+		return ServiceProtocolAuto
+	case "tcp":
+		return ServiceProtocolTCP
+	case "http":
+		return ServiceProtocolHTTP
+	case "http1", "http/1.0", "http/1.1", "http1.1":
+		return ServiceProtocolHTTP1
+	case "http2", "http/2", "h2c", "grpc-web":
+		return ServiceProtocolHTTP2
+	case "grpc":
+		return ServiceProtocolGRPC
+	default:
+		return ServiceProtocolAuto
+	}
+}
 
 // String returns the string representation of a ServiceProtocol.
 func (p ServiceProtocol) String() string {
 	switch p {
+	case ServiceProtocolTCP:
+		return "TCP"
 	case ServiceProtocolHTTP:
 		return "HTTP"
+	case ServiceProtocolHTTP1:
+		return "http1"
+	case ServiceProtocolHTTP2:
+		return "http2"
 	case ServiceProtocolGRPC:
 		return "gRPC"
 	default:
-		return "TCP"
+		return "auto"
+	}
+}
+
+// AgentProtocol returns the normalized protocol string expected by data plane
+// agents ("auto", "tcp", "http", "http1", or "http2").
+func (p ServiceProtocol) AgentProtocol() string {
+	switch p {
+	case ServiceProtocolTCP:
+		return "tcp"
+	case ServiceProtocolHTTP:
+		return "http"
+	case ServiceProtocolHTTP1:
+		return "http1"
+	case ServiceProtocolHTTP2, ServiceProtocolGRPC:
+		return "http2"
+	default:
+		return "auto"
 	}
 }
 
 // IsL7 reports whether the protocol supports L7 traffic policy features
 // such as HTTP-level retries and header-based routing.
 func (p ServiceProtocol) IsL7() bool {
-	return p == ServiceProtocolHTTP || p == ServiceProtocolGRPC
+	switch p {
+	case ServiceProtocolHTTP, ServiceProtocolHTTP1, ServiceProtocolHTTP2, ServiceProtocolGRPC:
+		return true
+	default:
+		return false
+	}
 }
 
 // Service represents a logical service in the mesh.

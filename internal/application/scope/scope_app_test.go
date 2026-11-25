@@ -147,3 +147,72 @@ func TestAgentScopeAppService_GetAgentScope_FallbackToResources(t *testing.T) {
 		t.Errorf("namespace CIDR = %v, want 100.64.99.0/24", scope.Namespaces[0].CIDR)
 	}
 }
+
+func TestAgentScopeAppService_GetAgentScope_NormalizesServiceProtocols(t *testing.T) {
+	resources := apptest.NewMockResourceStore()
+	state := apptest.NewMockStateStore()
+	policyStore := apptest.NewMockTrafficPolicyStore()
+	healthStore := apptest.NewMockEndpointHealthStore()
+	depStore := apptest.NewMockDependencyStore()
+	routes := apptest.NewMockRouteDistributor()
+	authzApp := authz.NewAuthzAppService(resources, depStore, nil, nil)
+
+	ctx := context.Background()
+	rawServices := map[string]string{
+		"svc-auto":  `{"port":8080}`,
+		"svc-http1": `{"protocol":"http/1.1","port":8081}`,
+		"svc-h2c":   `{"protocol":"h2c","port":8082}`,
+		"svc-grpc":  `{"protocol":"gRPC","port":50051}`,
+		"svc-tcp":   `{"protocol":"tcp","port":6379}`,
+	}
+	for name, spec := range rawServices {
+		resources.Put(ctx, "core.omnimesh.io/v1/Service/prod/"+name, &model.Resource{
+			APIVersion: "core.omnimesh.io/v1",
+			Kind:       "Service",
+			Metadata: model.ResourceMetadata{
+				Name:      name,
+				Namespace: "prod",
+			},
+			Spec: []byte(spec),
+		})
+	}
+
+	scopeApp := NewAgentScopeAppService(
+		resources,
+		state,
+		policyStore,
+		healthStore,
+		depStore,
+		routes,
+		nil,
+		authzApp,
+		nil,
+		nil,
+	)
+
+	scope, err := scopeApp.GetAgentScope(ctx, "node-1")
+	if err != nil {
+		t.Fatalf("GetAgentScope error = %v", err)
+	}
+
+	want := map[string]string{
+		"svc-auto":  "auto",
+		"svc-http1": "http1",
+		"svc-h2c":   "http2",
+		"svc-grpc":  "http2",
+		"svc-tcp":   "tcp",
+	}
+	if len(scope.Services) != len(want) {
+		t.Fatalf("expected %d services, got %d", len(want), len(scope.Services))
+	}
+	for _, svc := range scope.Services {
+		expected, ok := want[svc.ID.Name]
+		if !ok {
+			t.Errorf("unexpected service %q", svc.ID.Name)
+			continue
+		}
+		if got := svc.Protocol.AgentProtocol(); got != expected {
+			t.Errorf("service %q AgentProtocol() = %q, want %q", svc.ID.Name, got, expected)
+		}
+	}
+}

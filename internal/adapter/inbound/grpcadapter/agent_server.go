@@ -396,7 +396,7 @@ func serviceToAgentProto(svc model.Service) *omnimeshv1.ServiceInfo {
 	info := &omnimeshv1.ServiceInfo{
 		Namespace: svc.ID.Namespace,
 		Name:      svc.ID.Name,
-		Protocol:  svc.Protocol.String(),
+		Protocol:  svc.Protocol.AgentProtocol(),
 		Port:      int32(svc.Port),
 	}
 	for _, set := range svc.EffectiveSelectorSets() {

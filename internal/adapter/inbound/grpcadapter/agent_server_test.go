@@ -6,6 +6,7 @@ import (
 	"time"
 
 	omnimeshv1 "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1"
+	"github.com/esachser/omnimeshcontrol/internal/application/mapper"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 )
 
@@ -460,5 +461,98 @@ func TestScopeUpdateToProto_IncludesRouteNodeEndpointInfo(t *testing.T) {
 	}
 	if ep.Labels["version"] != "v2" {
 		t.Errorf("NodeEndpointInfo.Labels[version] = %q, want v2", ep.Labels["version"])
+	}
+}
+
+func TestServiceToAgentProto_NormalizesProtocol(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol model.ServiceProtocol
+		want     string
+	}{
+		{name: "auto", protocol: model.ServiceProtocolAuto, want: "auto"},
+		{name: "tcp", protocol: model.ServiceProtocolTCP, want: "tcp"},
+		{name: "http", protocol: model.ServiceProtocolHTTP, want: "http"},
+		{name: "http1", protocol: model.ServiceProtocolHTTP1, want: "http1"},
+		{name: "http2", protocol: model.ServiceProtocolHTTP2, want: "http2"},
+		{name: "grpc", protocol: model.ServiceProtocolGRPC, want: "http2"},
+		{name: "unknown", protocol: model.ServiceProtocol(99), want: "auto"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := model.Service{
+				ID:       model.ServiceID{Namespace: "prod", Name: "svc"},
+				Protocol: tc.protocol,
+				Port:     8080,
+			}
+
+			snapshot := scopeToProto(&model.AgentScope{Services: []model.Service{svc}})
+			if len(snapshot.Services) != 1 {
+				t.Fatalf("expected 1 service in snapshot, got %d", len(snapshot.Services))
+			}
+			if got := snapshot.Services[0].Protocol; got != tc.want {
+				t.Errorf("snapshot ServiceInfo.Protocol = %q, want %q", got, tc.want)
+			}
+
+			update := scopeUpdateToProto(model.ScopeUpdate{
+				Type:     model.ScopeUpdateAdd,
+				Services: []model.Service{svc},
+			})
+			if len(update.Services) != 1 {
+				t.Fatalf("expected 1 service in update, got %d", len(update.Services))
+			}
+			if got := update.Services[0].Protocol; got != tc.want {
+				t.Errorf("update ServiceInfo.Protocol = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestServiceToAgentProto_FromResourceSpecProtocols(t *testing.T) {
+	tests := []struct {
+		rawProtocol string
+		wantAgent   string
+	}{
+		{rawProtocol: "", wantAgent: "auto"},
+		{rawProtocol: "auto", wantAgent: "auto"},
+		{rawProtocol: "  AUTO  ", wantAgent: "auto"},
+		{rawProtocol: "tcp", wantAgent: "tcp"},
+		{rawProtocol: "TCP", wantAgent: "tcp"},
+		{rawProtocol: "http", wantAgent: "http"},
+		{rawProtocol: "HTTP", wantAgent: "http"},
+		{rawProtocol: "http1", wantAgent: "http1"},
+		{rawProtocol: "http/1.0", wantAgent: "http1"},
+		{rawProtocol: "http/1.1", wantAgent: "http1"},
+		{rawProtocol: "http1.1", wantAgent: "http1"},
+		{rawProtocol: "http2", wantAgent: "http2"},
+		{rawProtocol: "http/2", wantAgent: "http2"},
+		{rawProtocol: "h2c", wantAgent: "http2"},
+		{rawProtocol: "grpc", wantAgent: "http2"},
+		{rawProtocol: "gRPC", wantAgent: "http2"},
+		{rawProtocol: "grpc-web", wantAgent: "http2"},
+		{rawProtocol: "custom", wantAgent: "auto"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.rawProtocol, func(t *testing.T) {
+			res := &model.Resource{
+				Kind: "Service",
+				Metadata: model.ResourceMetadata{
+					Name:      "orders",
+					Namespace: "prod",
+				},
+				Spec: []byte(`{"protocol":"` + tc.rawProtocol + `","port":8080}`),
+			}
+			svc, err := mapper.ResourceToService(res)
+			if err != nil {
+				t.Fatalf("ResourceToService() error = %v", err)
+			}
+
+			snapshot := scopeToProto(&model.AgentScope{Services: []model.Service{*svc}})
+			if got := snapshot.Services[0].Protocol; got != tc.wantAgent {
+				t.Errorf("ServiceInfo.Protocol for %q = %q, want %q", tc.rawProtocol, got, tc.wantAgent)
+			}
+		})
 	}
 }

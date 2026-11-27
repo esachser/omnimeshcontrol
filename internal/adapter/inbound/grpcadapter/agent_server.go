@@ -529,21 +529,72 @@ func endpointHealthToProto(h model.EndpointHealth) *omnimeshv1.EndpointHealthInf
 }
 
 func authzPolicyToAgentProto(policy model.AuthorizationPolicy) *omnimeshv1.AuthzPolicyInfo {
-	return &omnimeshv1.AuthzPolicyInfo{
-		Namespace: policy.Namespace,
-		Name:      policy.Name,
-		Action:    policy.Action.String(),
-		Source: &omnimeshv1.SelectorInfo{
-			Namespace: policy.Source.Namespace,
-			Name:      policy.Source.Name,
-			Labels:    policy.Source.Labels,
-		},
-		Destination: &omnimeshv1.SelectorInfo{
-			Namespace: policy.Destination.Namespace,
-			Name:      policy.Destination.Name,
-			Labels:    policy.Destination.Labels,
-		},
+	info := &omnimeshv1.AuthzPolicyInfo{
+		Namespace:   policy.Namespace,
+		Name:        policy.Name,
+		Action:      policy.Action.String(),
+		Source:      selectorToAgentProto(policy.Source),
+		Destination: selectorToAgentProto(policy.Destination),
 	}
+
+	if len(policy.DestinationPorts) > 0 {
+		info.DestinationPorts = make([]int32, len(policy.DestinationPorts))
+		for i, port := range policy.DestinationPorts {
+			info.DestinationPorts[i] = int32(port)
+		}
+	}
+
+	if len(policy.Rules) > 0 {
+		info.Rules = make([]*omnimeshv1.AuthzRuleInfo, 0, len(policy.Rules))
+		for _, rule := range policy.Rules {
+			ruleProto := &omnimeshv1.AuthzRuleInfo{}
+			if rule.HTTP != nil {
+				ruleProto.Http = &omnimeshv1.HttpAuthzRuleInfo{
+					Methods:      append([]string(nil), rule.HTTP.Methods...),
+					PathPrefixes: append([]string(nil), rule.HTTP.PathPrefixes...),
+					PathExact:    append([]string(nil), rule.HTTP.PathExact...),
+					Headers:      cloneLabels(rule.HTTP.Headers),
+				}
+			}
+			if rule.GRPC != nil {
+				ruleProto.Grpc = &omnimeshv1.GrpcAuthzRuleInfo{
+					Services: append([]string(nil), rule.GRPC.Services...),
+					Methods:  append([]string(nil), rule.GRPC.Methods...),
+				}
+			}
+			info.Rules = append(info.Rules, ruleProto)
+		}
+	}
+
+	if policy.ValidFrom != nil {
+		info.ValidFrom = policy.ValidFrom.UTC().Format(time.RFC3339Nano)
+	}
+	if policy.ValidUntil != nil {
+		info.ValidUntil = policy.ValidUntil.UTC().Format(time.RFC3339Nano)
+	}
+
+	return info
+}
+
+func selectorToAgentProto(sel model.PolicySelector) *omnimeshv1.SelectorInfo {
+	return &omnimeshv1.SelectorInfo{
+		Namespace:   sel.Namespace,
+		Name:        sel.Name,
+		Labels:      cloneLabels(sel.Labels),
+		SpiffeId:    sel.SpiffeID,
+		TrustDomain: sel.TrustDomain,
+	}
+}
+
+func cloneLabels(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func healthStatusToProto(s model.EndpointHealthStatus) omnimeshv1.EndpointHealthStatus {

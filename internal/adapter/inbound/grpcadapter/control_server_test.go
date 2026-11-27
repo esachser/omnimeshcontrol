@@ -9,9 +9,12 @@ import (
 
 	omnimeshv1 "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1"
 	"github.com/esachser/omnimeshcontrol/internal/application/apptest"
+	"github.com/esachser/omnimeshcontrol/internal/application/authz"
 	"github.com/esachser/omnimeshcontrol/internal/application/namespace"
 	"github.com/esachser/omnimeshcontrol/internal/application/service"
+	"github.com/esachser/omnimeshcontrol/internal/codec"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
+	domainservice "github.com/esachser/omnimeshcontrol/internal/domain/service"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -23,6 +26,7 @@ func newTestControlPlaneServer(t *testing.T) (*ControlPlaneServer, *apptest.Mock
 	state := apptest.NewMockStateStore()
 	dns := apptest.NewMockDNSManager()
 	identity := apptest.NewMockIdentityManager()
+	depStore := apptest.NewMockDependencyStore()
 	cidr := netip.MustParsePrefix("100.64.0.0/10")
 
 	nsApp := namespace.NewNamespaceAppService(resources, cidr, nil)
@@ -38,8 +42,9 @@ func newTestControlPlaneServer(t *testing.T) (*ControlPlaneServer, *apptest.Mock
 		Namespaces: nsApp,
 		DNSZone:    "omnimesh.local",
 	})
+	authzApp := authz.NewAuthzAppService(resources, depStore, domainservice.NewAuthzEvaluator(), nil)
 
-	return NewControlPlaneServer(svcApp, nsApp, nil, nil, nil, nil), identity
+	return NewControlPlaneServer(svcApp, nsApp, nil, nil, authzApp, nil), identity
 }
 
 func TestControlPlaneServer_ApplyAndGetService_WithSelectorSets(t *testing.T) {
@@ -209,5 +214,101 @@ func TestControlPlaneServer_ApplyAndGetService_ProtocolVariants(t *testing.T) {
 				t.Errorf("get response protocol = %q, want %q", respSpec.Protocol, tc.wantProtocol)
 			}
 		})
+	}
+}
+
+func TestControlPlaneServer_ApplyGetListAuthorizationPolicy_FullSpec(t *testing.T) {
+	srv, _ := newTestControlPlaneServer(t)
+	ctx := context.Background()
+
+	fullSpec, err := json.Marshal(map[string]any{
+		"action": "DRY_RUN",
+		"source": map[string]any{
+			"namespace":   "production",
+			"name":        "order-service",
+			"labels":      map[string]string{"tier": "app"},
+			"spiffeID":    "spiffe://omnimesh.local/ns/production/sa/order-service",
+			"trustDomain": "omnimesh.local",
+		},
+		"destination": map[string]any{
+			"namespace": "production",
+			"name":      "payment-service",
+			"labels":    map[string]string{"pci": "true"},
+		},
+		"destinationPorts": []int{8080, 50051},
+		"rules": []map[string]any{
+			{
+				"http": map[string]any{
+					"methods":      []string{"POST"},
+					"pathPrefixes": []string{"/api/v1/charge"},
+					"pathExact":    []string{"/healthz"},
+					"headers":      map[string]string{"x-api-version": "v1"},
+				},
+			},
+			{
+				"grpc": map[string]any{
+					"services": []string{"payment.v1.PaymentService"},
+					"methods":  []string{"Charge"},
+				},
+			},
+		},
+		"validFrom":  "2026-03-04T16:00:00Z",
+		"validUntil": "2026-03-04T18:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("marshal fullSpec: %v", err)
+	}
+
+	applyResp, err := srv.ApplyResource(ctx, &omnimeshv1.ApplyResourceRequest{
+		Resource: &omnimeshv1.Resource{
+			ApiVersion: "policy.omnimesh.io/v1",
+			Kind:       "AuthorizationPolicy",
+			Metadata:   &omnimeshv1.ResourceMetadata{Name: "order-to-payment", Namespace: "production"},
+			Spec:       fullSpec,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyResource(AuthorizationPolicy) error = %v", err)
+	}
+
+	gotApply, err := codec.DecodeAuthzPolicySpec(applyResp.Resource.Spec, "order-to-payment", "production")
+	if err != nil {
+		t.Fatalf("decode apply response spec: %v", err)
+	}
+	if gotApply.Action != model.PolicyActionDryRun ||
+		gotApply.Source.SpiffeID != "spiffe://omnimesh.local/ns/production/sa/order-service" ||
+		gotApply.Source.Labels["tier"] != "app" ||
+		gotApply.Destination.Labels["pci"] != "true" ||
+		len(gotApply.DestinationPorts) != 2 ||
+		len(gotApply.Rules) != 2 ||
+		gotApply.ValidFrom == nil || gotApply.ValidUntil == nil {
+		t.Fatalf("unexpected decoded apply policy: %+v", gotApply)
+	}
+
+	getResp, err := srv.GetResource(ctx, &omnimeshv1.GetResourceRequest{
+		Kind:      "AuthorizationPolicy",
+		Namespace: "production",
+		Name:      "order-to-payment",
+	})
+	if err != nil {
+		t.Fatalf("GetResource() error = %v", err)
+	}
+	gotGet, err := codec.DecodeAuthzPolicySpec(getResp.Resource.Spec, "order-to-payment", "production")
+	if err != nil {
+		t.Fatalf("decode get response spec: %v", err)
+	}
+	if !reflect.DeepEqual(gotApply, gotGet) {
+		t.Fatalf("get response mismatch\napply: %+v\nget:   %+v", gotApply, gotGet)
+	}
+
+	listResp, err := srv.ListResources(ctx, &omnimeshv1.ListResourcesRequest{
+		Kind:      "AuthorizationPolicy",
+		Namespace: "production",
+	})
+	if err != nil {
+		t.Fatalf("ListResources() error = %v", err)
+	}
+	if len(listResp.Resources) != 1 {
+		t.Fatalf("ListResources() len = %d, want 1", len(listResp.Resources))
 	}
 }

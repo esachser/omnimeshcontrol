@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/esachser/omnimeshcontrol/internal/codec"
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	domainservice "github.com/esachser/omnimeshcontrol/internal/domain/service"
@@ -51,12 +52,15 @@ func (s *AuthzAppService) Create(ctx context.Context, policy *model.Authorizatio
 		return fmt.Errorf("authz create: %w", domain.ErrDuplicatePolicy)
 	}
 
-	resource := AuthzPolicyToResource(policy)
+	resource, err := codec.AuthzPolicyToResource(policy)
+	if err != nil {
+		return fmt.Errorf("authz create: %w", err)
+	}
 	if _, err := s.resources.Put(ctx, key, resource); err != nil {
 		return fmt.Errorf("authz create: %w", err)
 	}
 
-	if policy.Action == model.PolicyActionAllow {
+	if policy.Action == model.PolicyActionAllow && s.depStore != nil {
 		if err := s.updateDependencies(ctx, policy); err != nil {
 			s.logger.Warn("failed to update dependencies for authz policy",
 				"name", policy.Name, "error", err)
@@ -71,17 +75,21 @@ func (s *AuthzAppService) Create(ctx context.Context, policy *model.Authorizatio
 	return nil
 }
 
+// Update updates an existing authorization policy.
 func (s *AuthzAppService) Update(ctx context.Context, policy *model.AuthorizationPolicy) error {
 	if policy.Name == "" {
 		return fmt.Errorf("authz update: %w: name is required", domain.ErrInvalidName)
 	}
 
-	resource := AuthzPolicyToResource(policy)
+	resource, err := codec.AuthzPolicyToResource(policy)
+	if err != nil {
+		return fmt.Errorf("authz update: %w", err)
+	}
 	if _, err := s.resources.Put(ctx, s.policyKey(policy.Namespace, policy.Name), resource); err != nil {
 		return fmt.Errorf("authz update: %w", err)
 	}
 
-	if policy.Action == model.PolicyActionAllow {
+	if policy.Action == model.PolicyActionAllow && s.depStore != nil {
 		if err := s.updateDependencies(ctx, policy); err != nil {
 			s.logger.Warn("failed to update dependencies for authz policy",
 				"name", policy.Name, "error", err)

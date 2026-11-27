@@ -211,56 +211,39 @@ func (s *ControlPlaneServer) applyAuthorizationPolicy(ctx context.Context, r *om
 		return nil, status.Error(codes.InvalidArgument, "metadata is required")
 	}
 
-	var spec struct {
-		Action string `json:"action"`
-		Source struct {
-			Namespace string `json:"namespace"`
-			Name      string `json:"name"`
-		} `json:"source"`
-		Destination struct {
-			Namespace string `json:"namespace"`
-			Name      string `json:"name"`
-		} `json:"destination"`
-	}
-	if len(r.Spec) > 0 {
-		if err := json.Unmarshal(r.Spec, &spec); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid spec: %v", err)
-		}
-	}
-
-	policy := &model.AuthorizationPolicy{
-		Name:      r.Metadata.Name,
-		Namespace: r.Metadata.Namespace,
-		Source: model.PolicySelector{
-			Namespace: spec.Source.Namespace,
-			Name:      spec.Source.Name,
+	resource := &model.Resource{
+		APIVersion: r.ApiVersion,
+		Kind:       r.Kind,
+		Metadata: model.ResourceMetadata{
+			Name:      r.Metadata.Name,
+			Namespace: r.Metadata.Namespace,
+			Labels:    r.Metadata.Labels,
 		},
-		Destination: model.PolicySelector{
-			Namespace: spec.Destination.Namespace,
-			Name:      spec.Destination.Name,
-		},
+		Spec: r.Spec,
 	}
 
-	switch spec.Action {
-	case "DENY", "deny":
-		policy.Action = model.PolicyActionDeny
-	default:
-		policy.Action = model.PolicyActionAllow
+	policy, err := codec.ResourceToAuthzPolicy(resource)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid authorization policy: %v", err)
 	}
 
-	// Try get first — if exists, delete and recreate (idempotent apply).
+	// Try get first — if exists, update (idempotent apply).
 	_, getErr := s.authz.Get(ctx, policy.Namespace, policy.Name)
 	if getErr != nil {
-		// Policy does not exist — create.
 		if err := s.authz.Create(ctx, policy); err != nil {
 			if errors.Is(err, domain.ErrDuplicatePolicy) {
 				return nil, status.Errorf(codes.AlreadyExists, "authorization policy already exists: %v", err)
 			}
+			if errors.Is(err, domain.ErrInvalidName) {
+				return nil, status.Errorf(codes.InvalidArgument, "create authorization policy: %v", err)
+			}
 			return nil, status.Errorf(codes.Internal, "create authorization policy: %v", err)
 		}
 	} else {
-		// Policy exists — update.
 		if err := s.authz.Update(ctx, policy); err != nil {
+			if errors.Is(err, domain.ErrInvalidName) {
+				return nil, status.Errorf(codes.InvalidArgument, "update authorization policy: %v", err)
+			}
 			return nil, status.Errorf(codes.Internal, "update authorization policy: %v", err)
 		}
 	}
@@ -495,18 +478,7 @@ func trafficPolicyResourceToProto(policy *model.TrafficPolicy) *omnimeshv1.Resou
 }
 
 func authzPolicyToProto(policy *model.AuthorizationPolicy) *omnimeshv1.Resource {
-	spec := map[string]any{
-		"action": policy.Action.String(),
-		"source": map[string]any{
-			"namespace": policy.Source.Namespace,
-			"name":      policy.Source.Name,
-		},
-		"destination": map[string]any{
-			"namespace": policy.Destination.Namespace,
-			"name":      policy.Destination.Name,
-		},
-	}
-	specJSON, _ := json.Marshal(spec)
+	specJSON, _ := codec.EncodeAuthzPolicySpec(policy)
 
 	return &omnimeshv1.Resource{
 		ApiVersion: "policy.omnimesh.io/v1",

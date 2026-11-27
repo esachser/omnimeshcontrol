@@ -219,15 +219,40 @@ message TrafficRouteInfo {
 message AuthzPolicyInfo {
   string name = 1;
   string namespace = 2;
-  string action = 3;
+  string action = 3; // "ALLOW", "DENY", "DRY_RUN"
   SelectorInfo source = 4;
   SelectorInfo destination = 5;
+  repeated int32 destination_ports = 6;
+  repeated AuthzRuleInfo rules = 7;
+  // valid_from is an optional RFC 3339 UTC timestamp when the policy becomes active.
+  string valid_from = 8;
+  // valid_until is an optional RFC 3339 UTC timestamp when the policy expires.
+  string valid_until = 9;
 }
 
 message SelectorInfo {
   string namespace = 1;
   string name = 2;
   map<string, string> labels = 3;
+  string spiffe_id = 4;
+  string trust_domain = 5;
+}
+
+message AuthzRuleInfo {
+  HttpAuthzRuleInfo http = 1;
+  GrpcAuthzRuleInfo grpc = 2;
+}
+
+message HttpAuthzRuleInfo {
+  repeated string methods = 1;
+  repeated string path_prefixes = 2;
+  repeated string path_exact = 3;
+  map<string, string> headers = 4;
+}
+
+message GrpcAuthzRuleInfo {
+  repeated string services = 1;
+  repeated string methods = 2;
 }
 
 // EndpointHealthInfo carries health status for a specific service endpoint.

@@ -1,6 +1,12 @@
 package model
 
-// PolicyAction determines whether an authorization policy allows or denies traffic.
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// PolicyAction determines whether an authorization policy allows, denies, or dry-runs traffic.
 type PolicyAction int
 
 const (
@@ -8,6 +14,8 @@ const (
 	PolicyActionAllow PolicyAction = iota
 	// PolicyActionDeny explicitly denies traffic matching the policy.
 	PolicyActionDeny
+	// PolicyActionDryRun logs matching traffic decisions without enforcing them.
+	PolicyActionDryRun
 )
 
 // String returns the string representation of a PolicyAction.
@@ -15,8 +23,25 @@ func (a PolicyAction) String() string {
 	switch a {
 	case PolicyActionDeny:
 		return "DENY"
+	case PolicyActionDryRun:
+		return "DRY_RUN"
 	default:
 		return "ALLOW"
+	}
+}
+
+// ParsePolicyAction parses a raw action string into a PolicyAction.
+// Empty string defaults to PolicyActionAllow.
+func ParsePolicyAction(raw string) (PolicyAction, error) {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "", "ALLOW":
+		return PolicyActionAllow, nil
+	case "DENY":
+		return PolicyActionDeny, nil
+	case "DRY_RUN", "DRY-RUN", "DRYRUN":
+		return PolicyActionDryRun, nil
+	default:
+		return PolicyActionAllow, fmt.Errorf("unknown authorization policy action %q", raw)
 	}
 }
 
@@ -27,15 +52,52 @@ type AuthorizationPolicy struct {
 	Name string
 	// Namespace is the namespace of this authorization policy.
 	Namespace string
-	// Action is whether this policy ALLOWs or DENYs the matching traffic.
+	// Action is whether this policy ALLOWs, DENYs, or DRY_RUNs the matching traffic.
 	Action PolicyAction
-	// Source selects which services this policy applies to as the caller.
+	// Source selects which services or identities this policy applies to as the caller.
 	Source PolicySelector
-	// Destination selects which services this policy applies to as the target.
+	// Destination selects which services or identities this policy applies to as the target.
 	Destination PolicySelector
+	// DestinationPorts restricts matching to specific destination ports. Empty matches any port.
+	DestinationPorts []int
+	// Rules defines optional L7 authorization rules (HTTP or gRPC).
+	Rules []AuthzRule
+	// ValidFrom is the optional inclusive timestamp when the policy becomes active.
+	ValidFrom *time.Time
+	// ValidUntil is the optional exclusive timestamp when the policy expires.
+	ValidUntil *time.Time
 }
 
-// PolicySelector identifies a set of services by namespace, name, or labels.
+// AuthzRule defines an L7 authorization rule (either HTTP or gRPC).
+type AuthzRule struct {
+	// HTTP specifies HTTP-level authorization match criteria.
+	HTTP *HTTPAuthzRule
+	// GRPC specifies gRPC-level authorization match criteria.
+	GRPC *GRPCAuthzRule
+}
+
+// HTTPAuthzRule defines HTTP-specific L7 authorization criteria.
+type HTTPAuthzRule struct {
+	// Methods lists HTTP methods. Empty matches all methods.
+	Methods []string
+	// PathPrefixes lists URL path prefixes.
+	PathPrefixes []string
+	// PathExact lists exact URL paths.
+	PathExact []string
+	// Headers lists required HTTP headers.
+	Headers map[string]string
+}
+
+// GRPCAuthzRule defines gRPC-specific L7 authorization criteria.
+type GRPCAuthzRule struct {
+	// Services lists gRPC service names. Empty matches all services.
+	Services []string
+	// Methods lists gRPC method names. Empty matches all methods.
+	Methods []string
+}
+
+// PolicySelector identifies a set of services or identities by namespace, name, labels,
+// exact SPIFFE ID, or trust domain.
 // A wildcard "*" for Name matches all services in the namespace.
 type PolicySelector struct {
 	// Namespace of the selected service(s).
@@ -44,6 +106,10 @@ type PolicySelector struct {
 	Name string
 	// Labels further filters services within the namespace (AND logic).
 	Labels map[string]string
+	// SpiffeID selects an exact SPIFFE identity URI.
+	SpiffeID string
+	// TrustDomain selects all identities belonging to a SPIFFE trust domain.
+	TrustDomain string
 }
 
 // IsWildcard reports whether this selector matches all services in the namespace.

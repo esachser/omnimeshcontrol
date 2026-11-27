@@ -556,3 +556,90 @@ func TestServiceToAgentProto_FromResourceSpecProtocols(t *testing.T) {
 		})
 	}
 }
+
+func TestScopeToProto_IncludesFullAuthzPolicies(t *testing.T) {
+	validFrom := time.Date(2026, 3, 4, 16, 0, 0, 0, time.UTC)
+	validUntil := time.Date(2026, 3, 4, 18, 0, 0, 0, time.UTC)
+
+	policy := model.AuthorizationPolicy{
+		Name:      "order-to-payment",
+		Namespace: "production",
+		Action:    model.PolicyActionDryRun,
+		Source: model.PolicySelector{
+			Namespace:   "production",
+			Name:        "order-service",
+			Labels:      map[string]string{"version": "v1"},
+			SpiffeID:    "spiffe://omnimesh.local/ns/production/sa/order-service",
+			TrustDomain: "omnimesh.local",
+		},
+		Destination: model.PolicySelector{
+			Namespace:   "production",
+			Name:        "payment-service",
+			Labels:      map[string]string{"pci": "true"},
+			SpiffeID:    "spiffe://omnimesh.local/ns/production/sa/payment-service",
+			TrustDomain: "omnimesh.local",
+		},
+		DestinationPorts: []int{8080, 50051},
+		Rules: []model.AuthzRule{
+			{
+				HTTP: &model.HTTPAuthzRule{
+					Methods:      []string{"POST"},
+					PathPrefixes: []string{"/api/v1/charge"},
+					PathExact:    []string{"/healthz"},
+					Headers:      map[string]string{"x-api-version": "v1"},
+				},
+			},
+			{
+				GRPC: &model.GRPCAuthzRule{
+					Services: []string{"payment.v1.PaymentService"},
+					Methods:  []string{"Charge"},
+				},
+			},
+		},
+		ValidFrom:  &validFrom,
+		ValidUntil: &validUntil,
+	}
+
+	assertProto := func(t *testing.T, info *omnimeshv1.AuthzPolicyInfo) {
+		t.Helper()
+		if info.Name != "order-to-payment" || info.Namespace != "production" || info.Action != "DRY_RUN" {
+			t.Fatalf("unexpected header fields: %+v", info)
+		}
+		if info.Source.SpiffeId != policy.Source.SpiffeID || info.Source.TrustDomain != "omnimesh.local" || info.Source.Labels["version"] != "v1" {
+			t.Errorf("unexpected source selector: %+v", info.Source)
+		}
+		if info.Destination.SpiffeId != policy.Destination.SpiffeID || info.Destination.TrustDomain != "omnimesh.local" || info.Destination.Labels["pci"] != "true" {
+			t.Errorf("unexpected destination selector: %+v", info.Destination)
+		}
+		if len(info.DestinationPorts) != 2 || info.DestinationPorts[0] != 8080 || info.DestinationPorts[1] != 50051 {
+			t.Errorf("DestinationPorts = %v, want [8080 50051]", info.DestinationPorts)
+		}
+		if len(info.Rules) != 2 {
+			t.Fatalf("expected 2 rules, got %d", len(info.Rules))
+		}
+		if info.Rules[0].Http == nil || info.Rules[0].Http.Methods[0] != "POST" || info.Rules[0].Http.PathPrefixes[0] != "/api/v1/charge" || info.Rules[0].Http.PathExact[0] != "/healthz" || info.Rules[0].Http.Headers["x-api-version"] != "v1" {
+			t.Errorf("unexpected HTTP rule: %+v", info.Rules[0].Http)
+		}
+		if info.Rules[1].Grpc == nil || info.Rules[1].Grpc.Services[0] != "payment.v1.PaymentService" || info.Rules[1].Grpc.Methods[0] != "Charge" {
+			t.Errorf("unexpected gRPC rule: %+v", info.Rules[1].Grpc)
+		}
+		if info.ValidFrom != "2026-03-04T16:00:00Z" || info.ValidUntil != "2026-03-04T18:00:00Z" {
+			t.Errorf("temporal bounds = (%q, %q), want (2026-03-04T16:00:00Z, 2026-03-04T18:00:00Z)", info.ValidFrom, info.ValidUntil)
+		}
+	}
+
+	snapshot := scopeToProto(&model.AgentScope{AuthzPolicies: []model.AuthorizationPolicy{policy}})
+	if len(snapshot.AuthzPolicies) != 1 {
+		t.Fatalf("expected 1 authz policy in snapshot, got %d", len(snapshot.AuthzPolicies))
+	}
+	assertProto(t, snapshot.AuthzPolicies[0])
+
+	update := scopeUpdateToProto(model.ScopeUpdate{
+		Type:          model.ScopeUpdateModify,
+		AuthzPolicies: []model.AuthorizationPolicy{policy},
+	})
+	if len(update.AuthzPolicies) != 1 {
+		t.Fatalf("expected 1 authz policy in update, got %d", len(update.AuthzPolicies))
+	}
+	assertProto(t, update.AuthzPolicies[0])
+}

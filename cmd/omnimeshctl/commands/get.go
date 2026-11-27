@@ -130,6 +130,8 @@ func mapKind(input string) string {
 		return "TargetRoute"
 	case "tp", "trafficpolicy", "trafficpolicies", "traffic-policy", "traffic-policies":
 		return "TrafficPolicy"
+	case "ap", "authz", "authzpolicy", "authzpolicies", "authorizationpolicy", "authorizationpolicies", "authorization-policy", "authorization-policies":
+		return "AuthorizationPolicy"
 	default:
 		return input
 	}

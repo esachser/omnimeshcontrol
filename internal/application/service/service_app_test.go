@@ -267,3 +267,98 @@ func TestServiceAppService_List(t *testing.T) {
 		t.Errorf("List() = %d services, want 3", len(services))
 	}
 }
+
+func TestServiceAppService_Apply_UpdateSelectors(t *testing.T) {
+	app, resources, _, _, identity := newTestServiceApp(t)
+	ctx := context.Background()
+
+	nsApp := namespace.NewNamespaceAppService(resources, svcTestCIDR, nil)
+	if err := nsApp.Apply(ctx, &model.Namespace{Name: "production"}); err != nil {
+		t.Fatalf("namespace apply: %v", err)
+	}
+
+	first := &model.Service{
+		ID:        model.ServiceID{Namespace: "production", Name: "order-service"},
+		Protocol:  model.ServiceProtocolHTTP,
+		Port:      8080,
+		Selectors: []string{"windows:process-name:old.exe"},
+	}
+	if err := app.Apply(ctx, first); err != nil {
+		t.Fatalf("first Apply() error = %v", err)
+	}
+	firstAddr := first.MeshAddr
+
+	updated := &model.Service{
+		ID:       model.ServiceID{Namespace: "production", Name: "order-service"},
+		Protocol: model.ServiceProtocolHTTP,
+		Port:     8080,
+		SelectorSets: [][]string{
+			{"windows:user_sid:S-1-5-21-1001"},
+			{"unix:user:orders"},
+		},
+	}
+	if err := app.Apply(ctx, updated); err != nil {
+		t.Fatalf("second Apply() error = %v", err)
+	}
+
+	if updated.MeshAddr != firstAddr {
+		t.Errorf("updated MeshAddr = %v, want %v", updated.MeshAddr, firstAddr)
+	}
+
+	registeredID, ok := identity.Identities[updated.ID.String()]
+	if !ok {
+		t.Fatalf("identity missing after update")
+	}
+	if len(registeredID.Selectors) != 0 {
+		t.Errorf("expected legacy Selectors cleared, got %v", registeredID.Selectors)
+	}
+	if !reflect.DeepEqual(registeredID.SelectorSets, updated.SelectorSets) {
+		t.Errorf("registered SelectorSets = %v, want %v", registeredID.SelectorSets, updated.SelectorSets)
+	}
+}
+
+func TestServiceAppService_Apply_CustomTrustDomain(t *testing.T) {
+	resources := apptest.NewMockResourceStore()
+	state := apptest.NewMockStateStore()
+	dns := apptest.NewMockDNSManager()
+	identity := apptest.NewMockIdentityManager()
+	nsApp := namespace.NewNamespaceAppService(resources, svcTestCIDR, nil)
+
+	ctx := context.Background()
+	if err := nsApp.Apply(ctx, &model.Namespace{Name: "production"}); err != nil {
+		t.Fatalf("namespace apply: %v", err)
+	}
+
+	app := NewServiceAppService(ServiceAppServiceConfig{
+		Resources:   resources,
+		State:       state,
+		DNS:         dns,
+		Identity:    identity,
+		Namespaces:  nsApp,
+		DNSZone:     "mesh.example.com",
+		TrustDomain: "spiffe.example.org",
+	})
+
+	svc := &model.Service{
+		ID:       model.ServiceID{Namespace: "production", Name: "payment-service"},
+		Protocol: model.ServiceProtocolGRPC,
+		Port:     50051,
+	}
+	if err := app.Apply(ctx, svc); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	registeredID, ok := identity.Identities[svc.ID.String()]
+	if !ok {
+		t.Fatalf("identity not registered")
+	}
+	wantSPIFFEID := "spiffe://spiffe.example.org/ns/production/sa/payment-service"
+	if registeredID.SPIFFEID != wantSPIFFEID {
+		t.Errorf("SPIFFEID = %q, want %q", registeredID.SPIFFEID, wantSPIFFEID)
+	}
+
+	wantFQDN := "payment-service.production.mesh.example.com"
+	if _, ok := dns.Records[wantFQDN]; !ok {
+		t.Errorf("expected DNS record for %q", wantFQDN)
+	}
+}

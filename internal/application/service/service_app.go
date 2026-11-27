@@ -15,13 +15,14 @@ import (
 // ServiceAppService implements the ServiceManager inbound port.
 // It orchestrates: validate → allocate IP → register identity → persist → DNS.
 type ServiceAppService struct {
-	resources  outbound.ResourceStore
-	state      outbound.StateStore
-	dns        outbound.DNSRecordManager
-	identity   outbound.IdentityManager
-	namespaces inbound.NamespaceManager
-	dnsZone    string
-	logger     *slog.Logger
+	resources   outbound.ResourceStore
+	state       outbound.StateStore
+	dns         outbound.DNSRecordManager
+	identity    outbound.IdentityManager
+	namespaces  inbound.NamespaceManager
+	dnsZone     string
+	trustDomain string
+	logger      *slog.Logger
 }
 
 // ServiceAppServiceConfig holds dependencies for ServiceAppService.
@@ -32,7 +33,10 @@ type ServiceAppServiceConfig struct {
 	Identity   outbound.IdentityManager
 	Namespaces inbound.NamespaceManager
 	DNSZone    string
-	Logger     *slog.Logger
+	// TrustDomain is the SPIFFE trust domain used when building workload SPIFFE IDs.
+	// Defaults to DNSZone when empty.
+	TrustDomain string
+	Logger      *slog.Logger
 }
 
 // NewServiceAppService creates a new ServiceAppService.
@@ -40,14 +44,19 @@ func NewServiceAppService(cfg ServiceAppServiceConfig) *ServiceAppService {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	trustDomain := cfg.TrustDomain
+	if trustDomain == "" {
+		trustDomain = cfg.DNSZone
+	}
 	return &ServiceAppService{
-		resources:  cfg.Resources,
-		state:      cfg.State,
-		dns:        cfg.DNS,
-		identity:   cfg.Identity,
-		namespaces: cfg.Namespaces,
-		dnsZone:    cfg.DNSZone,
-		logger:     cfg.Logger,
+		resources:   cfg.Resources,
+		state:       cfg.State,
+		dns:         cfg.DNS,
+		identity:    cfg.Identity,
+		namespaces:  cfg.Namespaces,
+		dnsZone:     cfg.DNSZone,
+		trustDomain: trustDomain,
+		logger:      cfg.Logger,
 	}
 }
 
@@ -84,7 +93,7 @@ func (s *ServiceAppService) Apply(ctx context.Context, service *model.Service) e
 
 	// Register SPIFFE identity.
 	if s.identity != nil {
-		spiffeID := fmt.Sprintf("spiffe://%s/ns/%s/sa/%s", s.dnsZone, service.ID.Namespace, service.ID.Name)
+		spiffeID := fmt.Sprintf("spiffe://%s/ns/%s/sa/%s", s.trustDomain, service.ID.Namespace, service.ID.Name)
 		identity := model.ServiceIdentity{
 			SPIFFEID:     spiffeID,
 			ServiceID:    service.ID,

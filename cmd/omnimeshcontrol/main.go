@@ -63,7 +63,7 @@ func run(logger *slog.Logger) error {
 	spireServerAddr := envOrDefault("OMNIMESH_SPIRE_SERVER_ADDR", defaultSpireServerAddr)
 	spireAgentAddr := envOrDefault("OMNIMESH_SPIRE_AGENT_ADDR", defaultSpireAgentAddr)
 	spireTrustDomain := envOrDefault("OMNIMESH_SPIRE_TRUST_DOMAIN", dnsZone)
-	spireParentIDs := strings.Split(envOrDefault("OMNIMESH_SPIRE_PARENT_IDS", "spiffe://omnimesh.local/agents/dev-agent"), ",")
+	spireParentIDs := spire.ParseParentIDs(envOrDefault("OMNIMESH_SPIRE_PARENT_IDS", "spiffe://omnimesh.local/agents/dev-agent"))
 	rawSpireSelectorSets := os.Getenv("OMNIMESH_SPIRE_SELECTOR_SETS")
 	if rawSpireSelectorSets == "" {
 		rawSpireSelectorSets = envOrDefault("OMNIMESH_SPIRE_SELECTORS", "windows:process-name:{{.Name}}.exe;unix:user:{{.Name}}")
@@ -153,13 +153,14 @@ func run(logger *slog.Logger) error {
 	}
 
 	svcApp := service.NewServiceAppService(service.ServiceAppServiceConfig{
-		Resources:  resourceStore,
-		State:      stateStore,
-		DNS:        dnsManager,
-		Identity:   identityManager,
-		Namespaces: nsApp,
-		DNSZone:    dnsZone,
-		Logger:     logger,
+		Resources:   resourceStore,
+		State:       stateStore,
+		DNS:         dnsManager,
+		Identity:    identityManager,
+		Namespaces:  nsApp,
+		DNSZone:     dnsZone,
+		TrustDomain: spireTrustDomain,
+		Logger:      logger,
 	})
 
 	// NodeLivenessTracker backed by etcd leases

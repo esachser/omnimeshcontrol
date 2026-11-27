@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -52,12 +53,15 @@ type Config struct {
 	KeyFile string
 }
 
+const defaultSpireBatchSize = 100
+
 // SpireIdentityManager implements outbound.IdentityManager using the SPIRE Server Entry API.
 type SpireIdentityManager struct {
-	cfg    Config
-	logger *slog.Logger
-	conn   *grpc.ClientConn
-	client entryv1.EntryClient
+	cfg       Config
+	logger    *slog.Logger
+	conn      *grpc.ClientConn
+	client    entryv1.EntryClient
+	batchSize int
 }
 
 // NewIdentityManager creates and initializes a new SpireIdentityManager.
@@ -72,6 +76,7 @@ func NewIdentityManager(cfg Config, logger *slog.Logger) (*SpireIdentityManager,
 	if cfg.TrustDomain == "" {
 		return nil, fmt.Errorf("spire config: TrustDomain is required")
 	}
+	cfg.ParentIDs = normalizeNonEmptyTrimmed(cfg.ParentIDs)
 	if len(cfg.ParentIDs) == 0 {
 		return nil, fmt.Errorf("spire config: at least one ParentID is required")
 	}
@@ -112,11 +117,15 @@ func (m *SpireIdentityManager) Close() error {
 // Each selector set is registered as a separate SPIRE entry per configured parent ID,
 // allowing workloads matching any selector set (e.g. Windows or Linux) to attest.
 func (m *SpireIdentityManager) RegisterWorkload(ctx context.Context, identity model.ServiceIdentity) error {
-	m.logger.Info("registering workload in SPIRE", "service", identity.ServiceID, "spiffeID", identity.SPIFFEID)
+	spiffeIDStr := strings.TrimSpace(identity.SPIFFEID)
+	if spiffeIDStr == "" {
+		spiffeIDStr = fmt.Sprintf("spiffe://%s/ns/%s/sa/%s", m.cfg.TrustDomain, identity.ServiceID.Namespace, identity.ServiceID.Name)
+	}
+	m.logger.Info("registering workload in SPIRE", "service", identity.ServiceID, "spiffeID", spiffeIDStr)
 
-	spiffeID, err := parseSPIFFEID(identity.SPIFFEID)
+	spiffeID, err := parseSPIFFEID(spiffeIDStr)
 	if err != nil {
-		return fmt.Errorf("register workload: invalid spiffe ID %q: %w", identity.SPIFFEID, err)
+		return fmt.Errorf("register workload: invalid spiffe ID %q: %w", spiffeIDStr, err)
 	}
 
 	selectorSetTemplates := identity.EffectiveSelectorSets()
@@ -134,51 +143,42 @@ func (m *SpireIdentityManager) RegisterWorkload(ctx context.Context, identity mo
 		return err
 	}
 
-	listResp, err := m.client.ListEntries(ctx, &entryv1.ListEntriesRequest{
-		Filter: &entryv1.ListEntriesRequest_Filter{
-			BySpiffeId: spiffeID,
-		},
-	})
+	existingEntries, err := m.listEntriesBySPIFFEID(ctx, spiffeID)
 	if err != nil {
 		return fmt.Errorf("register workload: list existing entries: %w", err)
 	}
 
-	toCreate, toDeleteIDs := diffEntries(desiredEntries, listResp.Entries)
+	toCreate, toDeleteIDs := diffEntries(desiredEntries, existingEntries)
 
+	var createdCount int
 	if len(toCreate) > 0 {
-		req := &entryv1.BatchCreateEntryRequest{
-			Entries: toCreate,
-		}
-		m.logger.Debug("sending batch create entry request", "count", len(toCreate), "spiffeID", identity.SPIFFEID)
-		resp, err := m.client.BatchCreateEntry(ctx, req)
+		createdIDs, alreadyExistingIDs, err := m.createEntries(ctx, spiffeIDStr, toCreate)
 		if err != nil {
-			return fmt.Errorf("batch create entry call failed: %w", err)
+			return fmt.Errorf("register workload: %w", err)
 		}
-		if len(resp.Results) == 0 {
-			return fmt.Errorf("batch create entry call returned empty results")
-		}
-
-		for i, res := range resp.Results {
-			parentStr := formatSPIFFEID(toCreate[i].ParentId)
-			if res.Status.Code == int32(codes.AlreadyExists) {
-				m.logger.Debug("workload entry already exists in SPIRE", "parentID", parentStr, "spiffeID", identity.SPIFFEID)
-				continue
-			}
-			if res.Status.Code != int32(codes.OK) {
-				return fmt.Errorf("failed to register workload in SPIRE (parent: %s): code=%d message=%s",
-					parentStr, res.Status.Code, res.Status.Message)
-			}
-			m.logger.Info("successfully registered workload in SPIRE",
-				"entryID", res.Entry.Id, "parentID", parentStr, "spiffeID", identity.SPIFFEID)
+		createdCount = len(createdIDs)
+		if len(alreadyExistingIDs) > 0 {
+			toDeleteIDs = filterOutIDs(toDeleteIDs, alreadyExistingIDs)
 		}
 	}
 
 	if len(toDeleteIDs) > 0 {
-		m.logger.Info("removing stale spire entries", "count", len(toDeleteIDs), "spiffeID", identity.SPIFFEID)
+		m.logger.Info("removing stale spire entries",
+			"count", len(toDeleteIDs),
+			"entryIDs", toDeleteIDs,
+			"spiffeID", spiffeIDStr,
+		)
 		if err := m.deleteEntriesByID(ctx, toDeleteIDs); err != nil {
 			return fmt.Errorf("register workload: %w", err)
 		}
 	}
+
+	m.logger.Info("reconciled spire entries",
+		"spiffeID", spiffeIDStr,
+		"existing", len(existingEntries),
+		"created", createdCount,
+		"deleted", len(toDeleteIDs),
+	)
 
 	return nil
 }
@@ -193,25 +193,21 @@ func (m *SpireIdentityManager) DeregisterWorkload(ctx context.Context, serviceID
 		return fmt.Errorf("deregister workload: invalid spiffe ID: %w", err)
 	}
 
-	listReq := &entryv1.ListEntriesRequest{
-		Filter: &entryv1.ListEntriesRequest_Filter{
-			BySpiffeId: spiffeID,
-		},
-	}
-
-	listResp, err := m.client.ListEntries(ctx, listReq)
+	existingEntries, err := m.listEntriesBySPIFFEID(ctx, spiffeID)
 	if err != nil {
 		return fmt.Errorf("list entries failed: %w", err)
 	}
 
-	if len(listResp.Entries) == 0 {
+	if len(existingEntries) == 0 {
 		m.logger.Info("no matching spire entries found to delete", "spiffeID", spiffeIDStr)
 		return nil
 	}
 
-	var entryIDs []string
-	for _, entry := range listResp.Entries {
-		entryIDs = append(entryIDs, entry.Id)
+	entryIDs := make([]string, 0, len(existingEntries))
+	for _, entry := range existingEntries {
+		if entry != nil && entry.Id != "" {
+			entryIDs = append(entryIDs, entry.Id)
+		}
 	}
 
 	m.logger.Info("deleting spire entries", "count", len(entryIDs), "spiffeID", spiffeIDStr)
@@ -223,19 +219,199 @@ func (m *SpireIdentityManager) DeregisterWorkload(ctx context.Context, serviceID
 	return nil
 }
 
-func (m *SpireIdentityManager) deleteEntriesByID(ctx context.Context, entryIDs []string) error {
-	delResp, err := m.client.BatchDeleteEntry(ctx, &entryv1.BatchDeleteEntryRequest{Ids: entryIDs})
-	if err != nil {
-		return fmt.Errorf("batch delete entry call failed: %w", err)
+func (m *SpireIdentityManager) effectiveBatchSize() int {
+	if m.batchSize > 0 {
+		return m.batchSize
+	}
+	return defaultSpireBatchSize
+}
+
+func (m *SpireIdentityManager) listEntriesBySPIFFEID(ctx context.Context, spiffeID *spiretypes.SPIFFEID) ([]*spiretypes.Entry, error) {
+	var (
+		all        []*spiretypes.Entry
+		pageToken  string
+		seenTokens = make(map[string]struct{})
+	)
+
+	for {
+		resp, err := m.client.ListEntries(ctx, &entryv1.ListEntriesRequest{
+			Filter: &entryv1.ListEntriesRequest_Filter{
+				BySpiffeId: spiffeID,
+			},
+			OutputMask: &spiretypes.EntryMask{
+				SpiffeId:  true,
+				ParentId:  true,
+				Selectors: true,
+			},
+			PageToken: pageToken,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		all = append(all, resp.GetEntries()...)
+
+		nextToken := resp.GetNextPageToken()
+		if nextToken == "" {
+			break
+		}
+		if nextToken == pageToken {
+			return nil, fmt.Errorf("list entries: pagination loop detected for token %q", nextToken)
+		}
+		if _, seen := seenTokens[nextToken]; seen {
+			return nil, fmt.Errorf("list entries: repeated page token %q", nextToken)
+		}
+		seenTokens[nextToken] = struct{}{}
+		pageToken = nextToken
 	}
 
-	for _, res := range delResp.Results {
-		if res.Status.Code != int32(codes.OK) && res.Status.Code != int32(codes.NotFound) {
-			return fmt.Errorf("failed to delete spire entry %q: code=%d message=%s",
-				res.Id, res.Status.Code, res.Status.Message)
+	return all, nil
+}
+
+func (m *SpireIdentityManager) createEntries(ctx context.Context, spiffeIDStr string, entries []*spiretypes.Entry) ([]string, map[string]struct{}, error) {
+	batchSize := m.effectiveBatchSize()
+	var (
+		createdIDs         []string
+		alreadyExistingIDs = make(map[string]struct{})
+		errs               []error
+	)
+
+	for start := 0; start < len(entries); start += batchSize {
+		end := min(start+batchSize, len(entries))
+		chunk := entries[start:end]
+
+		m.logger.Debug("sending batch create entry request", "count", len(chunk), "spiffeID", spiffeIDStr)
+		resp, err := m.client.BatchCreateEntry(ctx, &entryv1.BatchCreateEntryRequest{
+			Entries: chunk,
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("batch create entry call failed: %w", err))
+			break
+		}
+		if len(resp.GetResults()) != len(chunk) {
+			errs = append(errs, fmt.Errorf("batch create entry returned %d results for %d entries", len(resp.GetResults()), len(chunk)))
+			break
+		}
+
+		for i, res := range resp.GetResults() {
+			parentStr := formatSPIFFEID(chunk[i].ParentId)
+			if res == nil || res.Status == nil {
+				errs = append(errs, fmt.Errorf("batch create entry result %d (parent: %s) missing status", i, parentStr))
+				continue
+			}
+
+			switch codes.Code(res.Status.Code) {
+			case codes.AlreadyExists:
+				m.logger.Debug("workload entry already exists in SPIRE", "parentID", parentStr, "spiffeID", spiffeIDStr)
+				if res.Entry != nil && res.Entry.Id != "" {
+					alreadyExistingIDs[res.Entry.Id] = struct{}{}
+				}
+			case codes.OK:
+				var entryID string
+				if res.Entry != nil && res.Entry.Id != "" {
+					entryID = res.Entry.Id
+					createdIDs = append(createdIDs, entryID)
+				}
+				m.logger.Info("successfully registered workload in SPIRE",
+					"entryID", entryID, "parentID", parentStr, "spiffeID", spiffeIDStr)
+			default:
+				errs = append(errs, fmt.Errorf("failed to register workload in SPIRE (parent: %s): code=%d message=%s",
+					parentStr, res.Status.Code, res.Status.Message))
+			}
+		}
+
+		if len(errs) > 0 {
+			break
 		}
 	}
-	return nil
+
+	if len(errs) > 0 {
+		if len(createdIDs) > 0 {
+			if rbErr := m.deleteEntriesByID(ctx, createdIDs); rbErr != nil {
+				m.logger.Warn("failed to rollback newly created spire entries",
+					"count", len(createdIDs), "spiffeID", spiffeIDStr, "error", rbErr)
+			}
+		}
+		return nil, nil, errors.Join(errs...)
+	}
+
+	return createdIDs, alreadyExistingIDs, nil
+}
+
+func (m *SpireIdentityManager) deleteEntriesByID(ctx context.Context, entryIDs []string) error {
+	uniqueIDs := normalizeNonEmptyTrimmed(entryIDs)
+	if len(uniqueIDs) == 0 {
+		return nil
+	}
+
+	batchSize := m.effectiveBatchSize()
+	var errs []error
+
+	for start := 0; start < len(uniqueIDs); start += batchSize {
+		end := min(start+batchSize, len(uniqueIDs))
+		chunk := uniqueIDs[start:end]
+
+		delResp, err := m.client.BatchDeleteEntry(ctx, &entryv1.BatchDeleteEntryRequest{Ids: chunk})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("batch delete entry call failed: %w", err))
+			continue
+		}
+		if len(delResp.GetResults()) != len(chunk) {
+			errs = append(errs, fmt.Errorf("batch delete entry returned %d results for %d entries", len(delResp.GetResults()), len(chunk)))
+			continue
+		}
+
+		for i, res := range delResp.GetResults() {
+			if res == nil || res.Status == nil {
+				errs = append(errs, fmt.Errorf("batch delete entry result %d (id: %q) missing status", i, chunk[i]))
+				continue
+			}
+			code := codes.Code(res.Status.Code)
+			if code != codes.OK && code != codes.NotFound {
+				entryID := res.Id
+				if entryID == "" {
+					entryID = chunk[i]
+				}
+				errs = append(errs, fmt.Errorf("failed to delete spire entry %q: code=%d message=%s",
+					entryID, res.Status.Code, res.Status.Message))
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func filterOutIDs(ids []string, exclude map[string]struct{}) []string {
+	if len(ids) == 0 || len(exclude) == 0 {
+		return ids
+	}
+	filtered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, skip := exclude[id]; !skip {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
+}
+
+func normalizeNonEmptyTrimmed(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
 }
 
 func (m *SpireIdentityManager) buildDesiredEntries(spiffeID *spiretypes.SPIFFEID, resolvedSets [][]*spiretypes.Selector) ([]*spiretypes.Entry, error) {
@@ -267,29 +443,27 @@ func (m *SpireIdentityManager) buildDesiredEntries(spiffeID *spiretypes.SPIFFEID
 }
 
 func diffEntries(desired, existing []*spiretypes.Entry) (toCreate []*spiretypes.Entry, toDeleteIDs []string) {
-	for _, d := range desired {
-		found := false
-		for _, e := range existing {
-			if entriesMatch(d, e) {
-				found = true
+	matchedDesired := make([]bool, len(desired))
+	for _, e := range existing {
+		if e == nil {
+			continue
+		}
+		matched := false
+		for i, d := range desired {
+			if !matchedDesired[i] && entriesMatch(d, e) {
+				matchedDesired[i] = true
+				matched = true
 				break
 			}
 		}
-		if !found {
-			toCreate = append(toCreate, d)
+		if !matched && e.Id != "" {
+			toDeleteIDs = append(toDeleteIDs, e.Id)
 		}
 	}
 
-	for _, e := range existing {
-		keep := false
-		for _, d := range desired {
-			if entriesMatch(d, e) {
-				keep = true
-				break
-			}
-		}
-		if !keep {
-			toDeleteIDs = append(toDeleteIDs, e.Id)
+	for i, d := range desired {
+		if !matchedDesired[i] {
+			toCreate = append(toCreate, d)
 		}
 	}
 
@@ -297,6 +471,9 @@ func diffEntries(desired, existing []*spiretypes.Entry) (toCreate []*spiretypes.
 }
 
 func entriesMatch(a, b *spiretypes.Entry) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
 	return spiffeIDsEqual(a.SpiffeId, b.SpiffeId) &&
 		spiffeIDsEqual(a.ParentId, b.ParentId) &&
 		selectorsEqual(a.Selectors, b.Selectors)
@@ -306,7 +483,22 @@ func spiffeIDsEqual(a, b *spiretypes.SPIFFEID) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return a.TrustDomain == b.TrustDomain && a.Path == b.Path
+	return strings.EqualFold(a.TrustDomain, b.TrustDomain) &&
+		normalizeSPIFFEPath(a.Path) == normalizeSPIFFEPath(b.Path)
+}
+
+func normalizeSPIFFEPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	trimmed := strings.TrimRight(path, "/")
+	if trimmed == "" {
+		return ""
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		return "/" + trimmed
+	}
+	return trimmed
 }
 
 func selectorsEqual(a, b []*spiretypes.Selector) bool {
@@ -481,6 +673,12 @@ func (c Config) effectiveSelectorSets() [][]string {
 	return nil
 }
 
+// ParseParentIDs parses a comma-delimited list of parent agent SPIFFE IDs,
+// trimming whitespace and dropping empty entries.
+func ParseParentIDs(raw string) []string {
+	return normalizeNonEmptyTrimmed(strings.Split(raw, ","))
+}
+
 // ParseSelectorSets parses a semicolon-delimited list of comma-delimited selector
 // templates (e.g. "windows:user:app,windows:sha256:abc;unix:user:app,unix:pid:1").
 func ParseSelectorSets(raw string) [][]string {
@@ -529,7 +727,10 @@ func (m *SpireIdentityManager) resolveSelectors(name, namespace string, selector
 		Namespace: namespace,
 	}
 
-	var selectors []*spiretypes.Selector
+	var (
+		selectors []*spiretypes.Selector
+		seen      = make(map[string]struct{}, len(selectorTemplates))
+	)
 	for _, tplStr := range selectorTemplates {
 		tplStr = strings.TrimSpace(tplStr)
 		if tplStr == "" {
@@ -547,9 +748,15 @@ func (m *SpireIdentityManager) resolveSelectors(name, namespace string, selector
 
 		resolved := strings.TrimSpace(buf.String())
 		parts := strings.SplitN(resolved, ":", 2)
-		if len(parts) != 2 {
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 			return nil, fmt.Errorf("invalid resolved selector %q: must be type:value format", resolved)
 		}
+
+		key := parts[0] + "\x00" + parts[1]
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
 
 		selectors = append(selectors, &spiretypes.Selector{
 			Type:  parts[0],
@@ -562,22 +769,30 @@ func (m *SpireIdentityManager) resolveSelectors(name, namespace string, selector
 
 // parseSPIFFEID parses a SPIFFE ID string into a *spiretypes.SPIFFEID struct.
 func parseSPIFFEID(idStr string) (*spiretypes.SPIFFEID, error) {
-	if !strings.HasPrefix(idStr, "spiffe://") {
+	trimmed := strings.TrimSpace(idStr)
+	if !strings.HasPrefix(trimmed, "spiffe://") {
 		return nil, fmt.Errorf("must start with spiffe://")
 	}
 
-	rest := idStr[len("spiffe://"):]
+	rest := trimmed[len("spiffe://"):]
+	if rest == "" {
+		return nil, fmt.Errorf("trust domain is required")
+	}
+
 	idx := strings.Index(rest, "/")
+	if idx == 0 {
+		return nil, fmt.Errorf("trust domain is required")
+	}
 	if idx == -1 {
 		return &spiretypes.SPIFFEID{
-			TrustDomain: rest,
+			TrustDomain: strings.ToLower(rest),
 			Path:        "",
 		}, nil
 	}
 
 	return &spiretypes.SPIFFEID{
-		TrustDomain: rest[:idx],
-		Path:        rest[idx:],
+		TrustDomain: strings.ToLower(rest[:idx]),
+		Path:        normalizeSPIFFEPath(rest[idx:]),
 	}, nil
 }
 

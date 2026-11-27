@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/esachser/omnimeshcontrol/internal/application/mapper"
+	"github.com/esachser/omnimeshcontrol/internal/application/telemetry"
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	domainservice "github.com/esachser/omnimeshcontrol/internal/domain/service"
@@ -19,6 +20,8 @@ type TrafficPolicyAppService struct {
 	resources   outbound.ResourceStore
 	validator   *domainservice.PolicyValidator
 	logger      *slog.Logger
+	metrics     outbound.MetricsRecorder
+	tracer      outbound.TraceExporter
 }
 
 // NewTrafficPolicyAppService creates a new TrafficPolicyAppService.
@@ -36,34 +39,58 @@ func NewTrafficPolicyAppService(
 		resources:   resources,
 		validator:   validator,
 		logger:      logger,
+		metrics:     telemetry.NoopMetricsRecorder{},
+		tracer:      telemetry.NoopTraceExporter{},
 	}
+}
+
+// SetTelemetry injects optional metrics and tracing ports.
+func (s *TrafficPolicyAppService) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = telemetry.EnsureMetrics(metrics)
+	s.tracer = telemetry.EnsureTracer(tracer)
 }
 
 // CreateTrafficPolicy creates a new traffic policy.
 func (s *TrafficPolicyAppService) CreateTrafficPolicy(ctx context.Context, policy *model.TrafficPolicy) error {
+	ctx, span := s.tracer.StartSpan(ctx, "TrafficPolicyAppService.Create", map[string]string{
+		"omnimesh.namespace":   policy.Namespace,
+		"omnimesh.policy.name": policy.Name,
+	})
+	defer span.End()
+
 	if policy.Name == "" {
-		return fmt.Errorf("policy create: %w: name is required", domain.ErrInvalidName)
+		err := fmt.Errorf("policy create: %w: name is required", domain.ErrInvalidName)
+		span.SetError(err)
+		return err
 	}
 
 	// Check target service exists and get its protocol for validation.
 	svc, err := s.getTargetService(ctx, policy.TargetService)
 	if err != nil {
-		return fmt.Errorf("policy create: %w", err)
+		err = fmt.Errorf("policy create: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	// Validate policy against service protocol.
 	if err := s.validator.Validate(policy, svc.Protocol); err != nil {
-		return fmt.Errorf("policy create: %w", err)
+		err = fmt.Errorf("policy create: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	// Check for existing policy on same service.
 	existing, _ := s.policyStore.GetPolicyByService(ctx, policy.TargetService)
 	if existing != nil {
-		return fmt.Errorf("policy create: %w", domain.ErrPolicyConflict)
+		err := fmt.Errorf("policy create: %w", domain.ErrPolicyConflict)
+		span.SetError(err)
+		return err
 	}
 
 	if err := s.policyStore.PutTrafficPolicy(ctx, policy); err != nil {
-		return fmt.Errorf("policy create: %w", err)
+		err = fmt.Errorf("policy create: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	s.logger.Info("traffic policy created",
@@ -76,17 +103,29 @@ func (s *TrafficPolicyAppService) CreateTrafficPolicy(ctx context.Context, polic
 
 // UpdateTrafficPolicy updates an existing traffic policy.
 func (s *TrafficPolicyAppService) UpdateTrafficPolicy(ctx context.Context, policy *model.TrafficPolicy) error {
+	ctx, span := s.tracer.StartSpan(ctx, "TrafficPolicyAppService.Update", map[string]string{
+		"omnimesh.namespace":   policy.Namespace,
+		"omnimesh.policy.name": policy.Name,
+	})
+	defer span.End()
+
 	svc, err := s.getTargetService(ctx, policy.TargetService)
 	if err != nil {
-		return fmt.Errorf("policy update: %w", err)
+		err = fmt.Errorf("policy update: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	if err := s.validator.Validate(policy, svc.Protocol); err != nil {
-		return fmt.Errorf("policy update: %w", err)
+		err = fmt.Errorf("policy update: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	if err := s.policyStore.PutTrafficPolicy(ctx, policy); err != nil {
-		return fmt.Errorf("policy update: %w", err)
+		err = fmt.Errorf("policy update: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	s.logger.Info("traffic policy updated", "name", policy.Name, "namespace", policy.Namespace)
@@ -104,8 +143,16 @@ func (s *TrafficPolicyAppService) GetTrafficPolicy(ctx context.Context, namespac
 
 // DeleteTrafficPolicy removes a traffic policy.
 func (s *TrafficPolicyAppService) DeleteTrafficPolicy(ctx context.Context, namespace, name string) error {
+	ctx, span := s.tracer.StartSpan(ctx, "TrafficPolicyAppService.Delete", map[string]string{
+		"omnimesh.namespace":   namespace,
+		"omnimesh.policy.name": name,
+	})
+	defer span.End()
+
 	if err := s.policyStore.DeleteTrafficPolicy(ctx, namespace, name); err != nil {
-		return fmt.Errorf("policy delete: %w", err)
+		err = fmt.Errorf("policy delete: %w", err)
+		span.SetError(err)
+		return err
 	}
 	s.logger.Info("traffic policy deleted", "name", name, "namespace", namespace)
 	return nil

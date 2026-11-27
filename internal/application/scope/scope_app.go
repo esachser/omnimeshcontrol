@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/esachser/omnimeshcontrol/internal/application/mapper"
+	"github.com/esachser/omnimeshcontrol/internal/application/telemetry"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
@@ -26,6 +27,8 @@ type AgentScopeAppService struct {
 	authz       inbound.AuthorizationPolicyManager
 	namespaces  inbound.NamespaceManager
 	logger      *slog.Logger
+	metrics     outbound.MetricsRecorder
+	tracer      outbound.TraceExporter
 }
 
 // NewAgentScopeAppService creates a new AgentScopeAppService.
@@ -55,16 +58,31 @@ func NewAgentScopeAppService(
 		authz:       authz,
 		namespaces:  namespaces,
 		logger:      logger,
+		metrics:     telemetry.NoopMetricsRecorder{},
+		tracer:      telemetry.NoopTraceExporter{},
 	}
+}
+
+// SetTelemetry injects optional metrics and tracing ports.
+func (s *AgentScopeAppService) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = telemetry.EnsureMetrics(metrics)
+	s.tracer = telemetry.EnsureTracer(tracer)
 }
 
 // GetAgentScope builds the full scope for an agent.
 func (s *AgentScopeAppService) GetAgentScope(ctx context.Context, nodeID string) (*model.AgentScope, error) {
+	ctx, span := s.tracer.StartSpan(ctx, "AgentScopeAppService.GetAgentScope", map[string]string{
+		"omnimesh.node": nodeID,
+	})
+	defer span.End()
+
 	scope := &model.AgentScope{NodeID: nodeID}
 
 	allResources, err := s.resources.List(ctx, "core.omnimesh.io/v1/Service/")
 	if err != nil {
-		return nil, fmt.Errorf("scope: list services: %w", err)
+		err = fmt.Errorf("scope: list services: %w", err)
+		span.SetError(err)
+		return nil, err
 	}
 
 	for _, r := range allResources {
@@ -161,6 +179,8 @@ func (s *AgentScopeAppService) GetAgentScope(ctx context.Context, nodeID string)
 			scope.Namespaces = append(scope.Namespaces, *ns)
 		}
 	}
+
+	s.metrics.RecordHistogram(ctx, model.MetricCPScopeServicesPerAgent, float64(len(scope.Services)), nil)
 
 	s.logger.Info("agent scope computed",
 		"nodeID", nodeID,

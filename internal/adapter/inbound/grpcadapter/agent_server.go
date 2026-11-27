@@ -10,6 +10,7 @@ import (
 	"time"
 
 	omnimeshv1 "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1"
+	"github.com/esachser/omnimeshcontrol/internal/application/telemetry"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
@@ -28,9 +29,12 @@ type AgentServer struct {
 	scopeManager   inbound.AgentScopeManager
 	routeManager   inbound.RouteManager
 	logger         *slog.Logger
+	metrics        outbound.MetricsRecorder
+	tracer         outbound.TraceExporter
 
-	mu            sync.RWMutex
-	activeStreams map[string]omnimeshv1.AgentService_AgentStreamServer
+	mu                  sync.RWMutex
+	activeStreams       map[string]omnimeshv1.AgentService_AgentStreamServer
+	activeNodePlatforms map[string]string
 }
 
 // NewAgentServer creates a new AgentServer.
@@ -45,13 +49,22 @@ func NewAgentServer(
 		logger = slog.Default()
 	}
 	return &AgentServer{
-		nodeRegistrar:  nodeRegistrar,
-		healthReporter: healthReporter,
-		scopeManager:   scopeManager,
-		routeManager:   routeManager,
-		logger:         logger,
-		activeStreams:  make(map[string]omnimeshv1.AgentService_AgentStreamServer),
+		nodeRegistrar:       nodeRegistrar,
+		healthReporter:      healthReporter,
+		scopeManager:        scopeManager,
+		routeManager:        routeManager,
+		logger:              logger,
+		metrics:             telemetry.NoopMetricsRecorder{},
+		tracer:              telemetry.NoopTraceExporter{},
+		activeStreams:       make(map[string]omnimeshv1.AgentService_AgentStreamServer),
+		activeNodePlatforms: make(map[string]string),
 	}
+}
+
+// SetTelemetry injects optional metrics and tracing ports into the server.
+func (s *AgentServer) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = telemetry.EnsureMetrics(metrics)
+	s.tracer = telemetry.EnsureTracer(tracer)
 }
 
 // AgentStream handles the persistent bidirectional gRPC stream.
@@ -93,50 +106,82 @@ func (s *AgentServer) AgentStream(stream omnimeshv1.AgentService_AgentStreamServ
 		s.logger.Info("agent stream opened", "nodeID", nodeID, "addr", reg.Addr)
 	}
 
-	s.mu.Lock()
-	s.activeStreams[nodeID] = stream
-	s.mu.Unlock()
+	platform := platformFromString(reg.Platform)
+	platformStr := platform.String()
+
+	regCtx, regSpan := s.tracer.StartSpan(ctx, "AgentService.Register", map[string]string{
+		"omnimesh.node":     nodeID,
+		"omnimesh.platform": platformStr,
+	})
 
 	// Build node model.
 	node := &model.Node{
 		ID:       nodeID,
-		Platform: platformFromString(reg.Platform),
+		Platform: platform,
 		Target:   reg.Target,
 		Addr:     reg.Addr,
 		Labels:   reg.Labels,
 	}
 
 	// Register the node.
-	if err := s.nodeRegistrar.RegisterNode(ctx, node); err != nil {
+	if err := s.nodeRegistrar.RegisterNode(regCtx, node); err != nil {
+		regSpan.SetError(err)
+		regSpan.End()
 		return status.Errorf(codes.Internal, "register node: %v", err)
 	}
 
 	// Persist TargetRoutes for the node's initial services.
 	for _, svcInfo := range reg.Services {
-		s.applyTargetRoute(ctx, svcInfo, nodeID)
+		s.applyTargetRoute(regCtx, svcInfo, nodeID)
 	}
+	regSpan.End()
+
+	s.mu.Lock()
+	s.activeStreams[nodeID] = stream
+	s.activeNodePlatforms[nodeID] = platformStr
+	connectedCount := s.countPlatformLocked(platformStr)
+	s.mu.Unlock()
+	s.metrics.SetGauge(ctx, model.MetricCPNodesConnected, float64(connectedCount), map[string]string{
+		"platform": platformStr,
+	})
 
 	// On stream close (normal or error), handle disconnect.
 	defer func() {
 		s.mu.Lock()
 		delete(s.activeStreams, nodeID)
+		delete(s.activeNodePlatforms, nodeID)
+		remaining := s.countPlatformLocked(platformStr)
 		s.mu.Unlock()
+		s.metrics.SetGauge(context.Background(), model.MetricCPNodesConnected, float64(remaining), map[string]string{
+			"platform": platformStr,
+		})
 
 		s.nodeRegistrar.OnStreamDisconnect(ctx, nodeID)
 		s.logger.Info("agent stream closed", "nodeID", nodeID)
 	}()
 
 	// Send initial scope snapshot.
-	scope, err := s.scopeManager.GetAgentScope(ctx, nodeID)
+	snapCtx, snapSpan := s.tracer.StartSpan(ctx, "AgentService.SendScopeSnapshot", map[string]string{
+		"omnimesh.node": nodeID,
+	})
+	scope, err := s.scopeManager.GetAgentScope(snapCtx, nodeID)
 	if err != nil {
+		snapSpan.SetError(err)
+		snapSpan.End()
 		s.logger.Warn("failed to get agent scope", "nodeID", nodeID, "error", err)
 	} else {
 		snapshot := scopeToProto(scope)
 		if err := stream.Send(&omnimeshv1.AgentStreamResponse{
 			Payload: &omnimeshv1.AgentStreamResponse_ScopeSnapshot{ScopeSnapshot: snapshot},
 		}); err != nil {
+			snapSpan.SetError(err)
+			snapSpan.End()
 			return status.Errorf(codes.Internal, "send scope snapshot: %v", err)
 		}
+		snapSpan.End()
+		s.metrics.IncrCounter(snapCtx, model.MetricCPScopeSnapshotsTotal, map[string]string{
+			"node_id": nodeID,
+		})
 	}
 
 	// Process incoming messages.
@@ -166,6 +211,12 @@ messagereceiver:
 }
 
 func (s *AgentServer) handleHealthReport(ctx context.Context, report *omnimeshv1.HealthReport, nodeID string) {
+	ctx, span := s.tracer.StartSpan(ctx, "AgentService.HandleHealthReport", map[string]string{
+		"omnimesh.node":                nodeID,
+		"omnimesh.destination.service": report.ServiceName,
+	})
+	defer span.End()
+
 	health := &model.EndpointHealth{
 		ServiceID: model.ServiceID{
 			Namespace: report.Namespace,
@@ -177,11 +228,17 @@ func (s *AgentServer) handleHealthReport(ctx context.Context, report *omnimeshv1
 		NodeID:    nodeID,
 	}
 	if err := s.healthReporter.ReportEndpointHealth(ctx, health); err != nil {
+		span.SetError(err)
 		s.logger.Warn("failed to process health report", "nodeID", nodeID, "error", err)
 	}
 }
 
 func (s *AgentServer) handleUpdateNodeServices(ctx context.Context, req *omnimeshv1.UpdateNodeServicesRequest, nodeID string) {
+	ctx, span := s.tracer.StartSpan(ctx, "AgentService.HandleUpdateNodeServices", map[string]string{
+		"omnimesh.node": nodeID,
+	})
+	defer span.End()
+
 	var added, removed []model.ServiceID
 
 	for _, raw := range req.AddedServices {
@@ -205,12 +262,19 @@ func (s *AgentServer) handleUpdateNodeServices(ctx context.Context, req *omnimes
 	}
 
 	if err := s.nodeRegistrar.UpdateNodeServices(ctx, nodeID, added, removed); err != nil {
+		span.SetError(err)
 		s.logger.Warn("failed to process update node services", "nodeID", nodeID, "error", err)
 	}
 }
 
 func (s *AgentServer) handleDrainNode(ctx context.Context, drain *omnimeshv1.DrainNodeRequest, nodeID string) {
+	ctx, span := s.tracer.StartSpan(ctx, "AgentService.HandleDrainNode", map[string]string{
+		"omnimesh.node": nodeID,
+	})
+	defer span.End()
+
 	if err := s.nodeRegistrar.DrainNode(ctx, nodeID); err != nil {
+		span.SetError(err)
 		s.logger.Warn("failed to process drain node", "nodeID", nodeID, "error", err)
 	}
 }
@@ -315,12 +379,21 @@ func scopeToProto(scope *model.AgentScope) *omnimeshv1.ScopeSnapshot {
 
 // PushUpdate pushes a differential scope update to a specific agent node.
 func (s *AgentServer) PushUpdate(ctx context.Context, nodeID string, update model.ScopeUpdate) error {
+	updateType := scopeUpdateTypeString(update.Type)
+	ctx, span := s.tracer.StartSpan(ctx, "AgentService.PushUpdate", map[string]string{
+		"omnimesh.node":        nodeID,
+		"omnimesh.update.type": updateType,
+	})
+	defer span.End()
+
 	s.mu.RLock()
 	stream, ok := s.activeStreams[nodeID]
 	s.mu.RUnlock()
 
 	if !ok {
-		return fmt.Errorf("active stream not found for node %q", nodeID)
+		err := fmt.Errorf("active stream not found for node %q", nodeID)
+		span.SetError(err)
+		return err
 	}
 
 	protoUpdate := scopeUpdateToProto(update)
@@ -328,9 +401,14 @@ func (s *AgentServer) PushUpdate(ctx context.Context, nodeID string, update mode
 	if err := stream.Send(&omnimeshv1.AgentStreamResponse{
 		Payload: &omnimeshv1.AgentStreamResponse_ScopeUpdate{ScopeUpdate: protoUpdate},
 	}); err != nil {
+		span.SetError(err)
 		return fmt.Errorf("send scope update: %w", err)
 	}
 
+	s.metrics.IncrCounter(ctx, model.MetricCPScopeUpdatesTotal, map[string]string{
+		"node_id":     nodeID,
+		"update_type": updateType,
+	})
 	return nil
 }
 
@@ -632,6 +710,12 @@ func namespaceToAgentProto(ns model.Namespace) *omnimeshv1.NamespaceInfo {
 
 // BroadcastUpdate pushes a differential scope update to all active agents.
 func (s *AgentServer) BroadcastUpdate(ctx context.Context, update model.ScopeUpdate) error {
+	updateType := scopeUpdateTypeString(update.Type)
+	ctx, span := s.tracer.StartSpan(ctx, "AgentService.BroadcastUpdate", map[string]string{
+		"omnimesh.update.type": updateType,
+	})
+	defer span.End()
+
 	s.mu.RLock()
 	streams := make(map[string]omnimeshv1.AgentService_AgentStreamServer, len(s.activeStreams))
 	for nodeID, stream := range s.activeStreams {
@@ -657,17 +741,45 @@ func (s *AgentServer) BroadcastUpdate(ctx context.Context, update model.ScopeUpd
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("node %s: %w", nID, err))
 				mu.Unlock()
+				return
 			}
+			s.metrics.IncrCounter(ctx, model.MetricCPScopeUpdatesTotal, map[string]string{
+				"node_id":     nID,
+				"update_type": updateType,
+			})
 		}(nodeID, stream)
 	}
 
 	wg.Wait()
 
 	if len(errs) > 0 {
-		return fmt.Errorf("broadcast scope update: %w", errors.Join(errs...))
+		err := fmt.Errorf("broadcast scope update: %w", errors.Join(errs...))
+		span.SetError(err)
+		return err
 	}
 
 	return nil
+}
+
+func (s *AgentServer) countPlatformLocked(platform string) int {
+	count := 0
+	for _, p := range s.activeNodePlatforms {
+		if p == platform {
+			count++
+		}
+	}
+	return count
+}
+
+func scopeUpdateTypeString(t model.ScopeUpdateType) string {
+	switch t {
+	case model.ScopeUpdateModify:
+		return "modify"
+	case model.ScopeUpdateRemove:
+		return "remove"
+	default:
+		return "add"
+	}
 }
 
 // Compile-time interface checks.

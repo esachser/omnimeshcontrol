@@ -1,0 +1,36 @@
+# Example observability configuration for omnimeshcontrol (RFC-0005).
+# Set OMNIMESH_TELEMETRY_CONFIG to the path of this file to enable it.
+observability:
+  metrics:
+    enabled: true
+    # Uses :9092 by default so it does not conflict with gRPC servers (:9090, :9091).
+    endpoint: ":9092"
+    export_interval: "15s"
+    agent_metrics_port: 9091
+    exporters:
+      - type: prometheus
+      # - type: otlp-grpc
+      #   target: "otel-collector:4317"
+      #   insecure: true
+    cardinality:
+      max_label_cardinality: 1000
+      # drop_labels:
+      #   omnimesh.cp.nodes.heartbeat.total:
+      #     - node_id
+      histogram_buckets:
+        duration_ms: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
+
+  traces:
+    enabled: false
+    sampler: "parentbased_traceidratio"
+    sample_rate: 0.01
+    always_sample_errors: true
+    exporters:
+      - type: otlp-grpc
+        target: "otel-collector:4317"
+        insecure: true
+
+  resource:
+    service.name: "omnimesh-control-plane"
+    service.namespace: "omnimesh"
+    deployment.environment: "development"

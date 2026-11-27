@@ -8,13 +8,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	omnimeshv1 "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1"
 	"github.com/esachser/omnimeshcontrol/internal/application/mapper"
+	"github.com/esachser/omnimeshcontrol/internal/application/telemetry"
 	"github.com/esachser/omnimeshcontrol/internal/codec"
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
+	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -28,6 +31,8 @@ type ControlPlaneServer struct {
 	policies   inbound.TrafficPolicyManager
 	authz      inbound.AuthorizationPolicyManager
 	logger     *slog.Logger
+	metrics    outbound.MetricsRecorder
+	tracer     outbound.TraceExporter
 }
 
 // NewControlPlaneServer creates a new ControlPlaneServer.
@@ -49,34 +54,96 @@ func NewControlPlaneServer(
 		policies:   policies,
 		authz:      authz,
 		logger:     logger,
+		metrics:    telemetry.NoopMetricsRecorder{},
+		tracer:     telemetry.NoopTraceExporter{},
 	}
+}
+
+// SetTelemetry injects optional metrics and tracing ports into the server.
+func (s *ControlPlaneServer) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = telemetry.EnsureMetrics(metrics)
+	s.tracer = telemetry.EnsureTracer(tracer)
 }
 
 // ApplyResource handles apply requests for all resource kinds.
 func (s *ControlPlaneServer) ApplyResource(ctx context.Context, req *omnimeshv1.ApplyResourceRequest) (*omnimeshv1.ApplyResourceResponse, error) {
-	if req.Resource == nil {
+	start := time.Now()
+	if req == nil || req.Resource == nil {
+		s.metrics.IncrCounter(ctx, model.MetricCPResourcesValidationErrors, map[string]string{
+			"kind":       "unknown",
+			"error_type": "structural",
+		})
+		s.metrics.IncrCounter(ctx, model.MetricCPResourcesApplyTotal, map[string]string{
+			"kind":      "unknown",
+			"namespace": "",
+			"result":    "error",
+		})
 		return nil, status.Error(codes.InvalidArgument, "resource is required")
 	}
 
 	r := req.Resource
+	ns := ""
+	if r.Metadata != nil {
+		ns = r.Metadata.Namespace
+	}
+
+	ctx, span := s.tracer.StartSpan(ctx, "ControlPlaneService.ApplyResource", map[string]string{
+		"omnimesh.resource.kind":      r.Kind,
+		"omnimesh.resource.namespace": ns,
+	})
+	defer span.End()
+
+	var (
+		resp *omnimeshv1.ApplyResourceResponse
+		err  error
+	)
 	switch r.Kind {
 	case "Service":
-		return s.applyService(ctx, r)
+		resp, err = s.applyService(ctx, r)
 	case "Namespace":
-		return s.applyNamespace(ctx, r)
+		resp, err = s.applyNamespace(ctx, r)
 	case "NetworkTarget":
-		return s.applyNetworkTarget(ctx, r)
+		resp, err = s.applyNetworkTarget(ctx, r)
 	case "TrafficPolicy":
-		return s.applyTrafficPolicy(ctx, r)
+		resp, err = s.applyTrafficPolicy(ctx, r)
 	case "AuthorizationPolicy":
-		return s.applyAuthorizationPolicy(ctx, r)
+		resp, err = s.applyAuthorizationPolicy(ctx, r)
 	default:
-		return nil, status.Errorf(codes.InvalidArgument, "unsupported resource kind: %s", r.Kind)
+		s.metrics.IncrCounter(ctx, model.MetricCPResourcesValidationErrors, map[string]string{
+			"kind":       r.Kind,
+			"error_type": "structural",
+		})
+		err = status.Errorf(codes.InvalidArgument, "unsupported resource kind: %s", r.Kind)
 	}
+
+	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+	s.metrics.RecordHistogram(ctx, model.MetricCPResourcesApplyDurationMs, durationMs, map[string]string{
+		"kind": r.Kind,
+	})
+
+	result := "success"
+	if err != nil {
+		result = "error"
+		span.SetError(err)
+	}
+	s.metrics.IncrCounter(ctx, model.MetricCPResourcesApplyTotal, map[string]string{
+		"kind":      r.Kind,
+		"namespace": ns,
+		"result":    result,
+	})
+	return resp, err
+}
+
+func (s *ControlPlaneServer) recordValidationError(ctx context.Context, kind, errorType string) {
+	s.metrics.IncrCounter(ctx, model.MetricCPResourcesValidationErrors, map[string]string{
+		"kind":       kind,
+		"error_type": errorType,
+	})
 }
 
 func (s *ControlPlaneServer) applyService(ctx context.Context, r *omnimeshv1.Resource) (*omnimeshv1.ApplyResourceResponse, error) {
 	if r.Metadata == nil {
+		s.recordValidationError(ctx, r.Kind, "structural")
 		return nil, status.Error(codes.InvalidArgument, "metadata is required")
 	}
 
@@ -93,11 +160,13 @@ func (s *ControlPlaneServer) applyService(ctx context.Context, r *omnimeshv1.Res
 
 	svc, err := mapper.ResourceToService(resource)
 	if err != nil {
+		s.recordValidationError(ctx, r.Kind, "structural")
 		return nil, status.Errorf(codes.InvalidArgument, "invalid spec: %v", err)
 	}
 
 	if err := s.services.Apply(ctx, svc); err != nil {
 		if errors.Is(err, domain.ErrInvalidSelectors) || errors.Is(err, domain.ErrInvalidName) || errors.Is(err, domain.ErrInvalidNamespace) {
+			s.recordValidationError(ctx, r.Kind, "semantic")
 			return nil, status.Errorf(codes.InvalidArgument, "apply service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "apply service: %v", err)
@@ -110,6 +179,7 @@ func (s *ControlPlaneServer) applyService(ctx context.Context, r *omnimeshv1.Res
 
 func (s *ControlPlaneServer) applyNamespace(ctx context.Context, r *omnimeshv1.Resource) (*omnimeshv1.ApplyResourceResponse, error) {
 	if r.Metadata == nil {
+		s.recordValidationError(ctx, r.Kind, "structural")
 		return nil, status.Error(codes.InvalidArgument, "metadata is required")
 	}
 
@@ -126,10 +196,14 @@ func (s *ControlPlaneServer) applyNamespace(ctx context.Context, r *omnimeshv1.R
 
 	ns, err := mapper.ResourceToNamespace(resource)
 	if err != nil {
+		s.recordValidationError(ctx, r.Kind, "structural")
 		return nil, status.Errorf(codes.InvalidArgument, "invalid namespace: %v", err)
 	}
 
 	if err := s.namespaces.Apply(ctx, ns); err != nil {
+		if errors.Is(err, domain.ErrInvalidName) || errors.Is(err, domain.ErrInvalidCIDR) {
+			s.recordValidationError(ctx, r.Kind, "semantic")
+		}
 		return nil, status.Errorf(codes.Internal, "apply namespace: %v", err)
 	}
 
@@ -140,6 +214,7 @@ func (s *ControlPlaneServer) applyNamespace(ctx context.Context, r *omnimeshv1.R
 
 func (s *ControlPlaneServer) applyNetworkTarget(ctx context.Context, r *omnimeshv1.Resource) (*omnimeshv1.ApplyResourceResponse, error) {
 	if r.Metadata == nil {
+		s.recordValidationError(ctx, r.Kind, "structural")
 		return nil, status.Error(codes.InvalidArgument, "metadata is required")
 	}
 
@@ -148,6 +223,7 @@ func (s *ControlPlaneServer) applyNetworkTarget(ctx context.Context, r *omnimesh
 	}
 	if len(r.Spec) > 0 {
 		if err := json.Unmarshal(r.Spec, &spec); err != nil {
+			s.recordValidationError(ctx, r.Kind, "structural")
 			return nil, status.Errorf(codes.InvalidArgument, "invalid spec: %v", err)
 		}
 	}
@@ -168,6 +244,7 @@ func (s *ControlPlaneServer) applyNetworkTarget(ctx context.Context, r *omnimesh
 
 func (s *ControlPlaneServer) applyTrafficPolicy(ctx context.Context, r *omnimeshv1.Resource) (*omnimeshv1.ApplyResourceResponse, error) {
 	if r.Metadata == nil {
+		s.recordValidationError(ctx, r.Kind, "structural")
 		return nil, status.Error(codes.InvalidArgument, "metadata is required")
 	}
 
@@ -184,6 +261,7 @@ func (s *ControlPlaneServer) applyTrafficPolicy(ctx context.Context, r *omnimesh
 
 	policy, err := codec.ResourceToTrafficPolicy(resource)
 	if err != nil {
+		s.recordValidationError(ctx, r.Kind, "structural")
 		return nil, status.Errorf(codes.InvalidArgument, "invalid traffic policy: %v", err)
 	}
 
@@ -193,10 +271,12 @@ func (s *ControlPlaneServer) applyTrafficPolicy(ctx context.Context, r *omnimesh
 			return nil, status.Errorf(codes.Internal, "get traffic policy: %v", getErr)
 		}
 		if err := s.policies.CreateTrafficPolicy(ctx, policy); err != nil {
+			s.recordValidationError(ctx, r.Kind, "semantic")
 			return nil, status.Errorf(codes.Internal, "create traffic policy: %v", err)
 		}
 	} else {
 		if err := s.policies.UpdateTrafficPolicy(ctx, policy); err != nil {
+			s.recordValidationError(ctx, r.Kind, "semantic")
 			return nil, status.Errorf(codes.Internal, "update traffic policy: %v", err)
 		}
 	}
@@ -208,6 +288,7 @@ func (s *ControlPlaneServer) applyTrafficPolicy(ctx context.Context, r *omnimesh
 
 func (s *ControlPlaneServer) applyAuthorizationPolicy(ctx context.Context, r *omnimeshv1.Resource) (*omnimeshv1.ApplyResourceResponse, error) {
 	if r.Metadata == nil {
+		s.recordValidationError(ctx, r.Kind, "structural")
 		return nil, status.Error(codes.InvalidArgument, "metadata is required")
 	}
 
@@ -224,6 +305,7 @@ func (s *ControlPlaneServer) applyAuthorizationPolicy(ctx context.Context, r *om
 
 	policy, err := codec.ResourceToAuthzPolicy(resource)
 	if err != nil {
+		s.recordValidationError(ctx, r.Kind, "structural")
 		return nil, status.Errorf(codes.InvalidArgument, "invalid authorization policy: %v", err)
 	}
 
@@ -232,9 +314,11 @@ func (s *ControlPlaneServer) applyAuthorizationPolicy(ctx context.Context, r *om
 	if getErr != nil {
 		if err := s.authz.Create(ctx, policy); err != nil {
 			if errors.Is(err, domain.ErrDuplicatePolicy) {
+				s.recordValidationError(ctx, r.Kind, "semantic")
 				return nil, status.Errorf(codes.AlreadyExists, "authorization policy already exists: %v", err)
 			}
 			if errors.Is(err, domain.ErrInvalidName) {
+				s.recordValidationError(ctx, r.Kind, "semantic")
 				return nil, status.Errorf(codes.InvalidArgument, "create authorization policy: %v", err)
 			}
 			return nil, status.Errorf(codes.Internal, "create authorization policy: %v", err)
@@ -242,6 +326,7 @@ func (s *ControlPlaneServer) applyAuthorizationPolicy(ctx context.Context, r *om
 	} else {
 		if err := s.authz.Update(ctx, policy); err != nil {
 			if errors.Is(err, domain.ErrInvalidName) {
+				s.recordValidationError(ctx, r.Kind, "semantic")
 				return nil, status.Errorf(codes.InvalidArgument, "update authorization policy: %v", err)
 			}
 			return nil, status.Errorf(codes.Internal, "update authorization policy: %v", err)
@@ -255,6 +340,21 @@ func (s *ControlPlaneServer) applyAuthorizationPolicy(ctx context.Context, r *om
 
 // GetResource retrieves a resource by kind/namespace/name.
 func (s *ControlPlaneServer) GetResource(ctx context.Context, req *omnimeshv1.GetResourceRequest) (*omnimeshv1.GetResourceResponse, error) {
+	ctx, span := s.tracer.StartSpan(ctx, "ControlPlaneService.GetResource", map[string]string{
+		"omnimesh.resource.kind":      req.GetKind(),
+		"omnimesh.resource.namespace": req.GetNamespace(),
+		"omnimesh.resource.name":      req.GetName(),
+	})
+	defer span.End()
+
+	resp, err := s.getResource(ctx, req)
+	if err != nil {
+		span.SetError(err)
+	}
+	return resp, err
+}
+
+func (s *ControlPlaneServer) getResource(ctx context.Context, req *omnimeshv1.GetResourceRequest) (*omnimeshv1.GetResourceResponse, error) {
 	switch req.Kind {
 	case "Service":
 		svc, err := s.services.Get(ctx, req.Namespace, req.Name)
@@ -298,6 +398,20 @@ func (s *ControlPlaneServer) GetResource(ctx context.Context, req *omnimeshv1.Ge
 
 // ListResources lists resources by kind and optional namespace.
 func (s *ControlPlaneServer) ListResources(ctx context.Context, req *omnimeshv1.ListResourcesRequest) (*omnimeshv1.ListResourcesResponse, error) {
+	ctx, span := s.tracer.StartSpan(ctx, "ControlPlaneService.ListResources", map[string]string{
+		"omnimesh.resource.kind":      req.GetKind(),
+		"omnimesh.resource.namespace": req.GetNamespace(),
+	})
+	defer span.End()
+
+	resp, err := s.listResources(ctx, req)
+	if err != nil {
+		span.SetError(err)
+	}
+	return resp, err
+}
+
+func (s *ControlPlaneServer) listResources(ctx context.Context, req *omnimeshv1.ListResourcesRequest) (*omnimeshv1.ListResourcesResponse, error) {
 	switch req.Kind {
 	case "Service":
 		services, err := s.services.List(ctx, req.Namespace)
@@ -361,6 +475,28 @@ func (s *ControlPlaneServer) ListResources(ctx context.Context, req *omnimeshv1.
 
 // DeleteResource deletes a resource by kind/namespace/name.
 func (s *ControlPlaneServer) DeleteResource(ctx context.Context, req *omnimeshv1.DeleteResourceRequest) (*omnimeshv1.DeleteResourceResponse, error) {
+	ctx, span := s.tracer.StartSpan(ctx, "ControlPlaneService.DeleteResource", map[string]string{
+		"omnimesh.resource.kind":      req.GetKind(),
+		"omnimesh.resource.namespace": req.GetNamespace(),
+		"omnimesh.resource.name":      req.GetName(),
+	})
+	defer span.End()
+
+	resp, err := s.deleteResource(ctx, req)
+	result := "success"
+	if err != nil {
+		result = "error"
+		span.SetError(err)
+	}
+	s.metrics.IncrCounter(ctx, model.MetricCPResourcesDeleteTotal, map[string]string{
+		"kind":      req.GetKind(),
+		"namespace": req.GetNamespace(),
+		"result":    result,
+	})
+	return resp, err
+}
+
+func (s *ControlPlaneServer) deleteResource(ctx context.Context, req *omnimeshv1.DeleteResourceRequest) (*omnimeshv1.DeleteResourceResponse, error) {
 	switch req.Kind {
 	case "Service":
 		if err := s.services.Delete(ctx, req.Namespace, req.Name); err != nil {

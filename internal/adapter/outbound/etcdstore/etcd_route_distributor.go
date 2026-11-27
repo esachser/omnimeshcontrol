@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
@@ -27,11 +28,13 @@ type NodeDrainChecker interface {
 //   - AllRoutes is always a fast, lock-free in-memory read.
 //   - DELETE events (including those from lease expiry) are broadcast to agents.
 type EtcdRouteDistributor struct {
-	stateStore    outbound.StateStore
-	distributor   outbound.ScopeDistributor // set via SetScopeDistributor; may be nil
-	drainChecker  NodeDrainChecker          // set via SetNodeDrainChecker; may be nil
-	logger        *slog.Logger
-	targets       inbound.TargetManager
+	stateStore   outbound.StateStore
+	distributor  outbound.ScopeDistributor // set via SetScopeDistributor; may be nil
+	drainChecker NodeDrainChecker          // set via SetNodeDrainChecker; may be nil
+	logger       *slog.Logger
+	targets      inbound.TargetManager
+	metrics      outbound.MetricsRecorder
+	tracer       outbound.TraceExporter
 
 	mu     sync.RWMutex
 	routes map[string]model.TargetRoute // keyed by full etcd key
@@ -47,8 +50,16 @@ func NewEtcdRouteDistributor(stateStore outbound.StateStore, targets inbound.Tar
 		stateStore: stateStore,
 		targets:    targets,
 		logger:     logger,
+		metrics:    noopMetrics{},
+		tracer:     noopTracer{},
 		routes:     make(map[string]model.TargetRoute),
 	}
+}
+
+// SetTelemetry configures optional metrics and tracing recorders.
+func (d *EtcdRouteDistributor) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	d.metrics = ensureMetrics(metrics)
+	d.tracer = ensureTracer(tracer)
 }
 
 // SetScopeDistributor sets the distributor used to broadcast route removal
@@ -71,11 +82,22 @@ func (d *EtcdRouteDistributor) SetNodeDrainChecker(checker NodeDrainChecker) {
 // AnnounceRoute persists a TargetRoute to etcd.
 // The in-memory cache is updated by the watch goroutine.
 func (d *EtcdRouteDistributor) AnnounceRoute(ctx context.Context, route model.TargetRoute) error {
+	ctx, span := d.tracer.StartSpan(ctx, "RouteDistributor.AnnounceRoute", map[string]string{
+		"omnimesh.namespace":           route.Namespace,
+		"omnimesh.node":                route.NodeID,
+		"omnimesh.destination.service": route.TargetService,
+	})
+	defer span.End()
+
 	// Pass leaseID=0: the distributor announces routes from a global perspective,
 	// not tied to a single node's connection lease.
 	if err := d.stateStore.PersistTargetRoute(ctx, &route, 0); err != nil {
+		span.SetError(err)
 		return fmt.Errorf("etcd route distributor: announce %q: %w", route.Name, err)
 	}
+	d.metrics.IncrCounter(ctx, model.MetricCPRoutesAnnouncementsTotal, map[string]string{
+		"transport": "grpc",
+	})
 	d.logger.Info("target route announced",
 		"namespace", route.Namespace,
 		"nodeID", route.NodeID,
@@ -88,9 +110,20 @@ func (d *EtcdRouteDistributor) AnnounceRoute(ctx context.Context, route model.Ta
 // WithdrawRoute removes a TargetRoute from etcd.
 // The in-memory cache is updated by the watch goroutine.
 func (d *EtcdRouteDistributor) WithdrawRoute(ctx context.Context, route model.TargetRoute) error {
+	ctx, span := d.tracer.StartSpan(ctx, "RouteDistributor.WithdrawRoute", map[string]string{
+		"omnimesh.namespace":           route.Namespace,
+		"omnimesh.node":                route.NodeID,
+		"omnimesh.destination.service": route.TargetService,
+	})
+	defer span.End()
+
 	if err := d.stateStore.DeleteTargetRoute(ctx, route.Namespace, route.NodeID, route.TargetService, route.Name); err != nil {
+		span.SetError(err)
 		return fmt.Errorf("etcd route distributor: withdraw %q: %w", route.Name, err)
 	}
+	d.metrics.IncrCounter(ctx, model.MetricCPRoutesWithdrawalsTotal, map[string]string{
+		"transport": "grpc",
+	})
 	d.logger.Info("target route withdrawn",
 		"namespace", route.Namespace,
 		"nodeID", route.NodeID,
@@ -186,12 +219,15 @@ func (d *EtcdRouteDistributor) handleEvent(event outbound.TargetRouteStateEvent)
 			Type:   model.ScopeUpdateAdd,
 			Routes: []model.TargetRoute{updated},
 		}
+		distStart := time.Now()
 		if err := dist.BroadcastUpdate(context.Background(), update); err != nil {
 			d.logger.Warn("route distributor: broadcast add failed",
 				"route", updated.Name,
 				"nodeID", updated.NodeID,
 				"error", err,
 			)
+		} else {
+			d.metrics.RecordHistogram(context.Background(), model.MetricCPRoutesDistributionDurationMs, float64(time.Since(distStart).Microseconds())/1000.0, nil)
 		}
 
 	case outbound.StateEventDelete:
@@ -217,12 +253,15 @@ func (d *EtcdRouteDistributor) handleEvent(event outbound.TargetRouteStateEvent)
 				Type:   model.ScopeUpdateRemove,
 				Routes: []model.TargetRoute{deleted},
 			}
+			distStart := time.Now()
 			if err := dist.BroadcastUpdate(context.Background(), update); err != nil {
 				d.logger.Warn("route distributor: broadcast remove failed",
 					"route", deleted.Name,
 					"nodeID", deleted.NodeID,
 					"error", err,
 				)
+			} else {
+				d.metrics.RecordHistogram(context.Background(), model.MetricCPRoutesDistributionDurationMs, float64(time.Since(distStart).Microseconds())/1000.0, nil)
 			}
 		}
 	}

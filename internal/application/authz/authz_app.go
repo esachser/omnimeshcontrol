@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/esachser/omnimeshcontrol/internal/application/telemetry"
 	"github.com/esachser/omnimeshcontrol/internal/codec"
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
@@ -21,6 +22,8 @@ type AuthzAppService struct {
 	depStore  outbound.DependencyStore
 	evaluator *domainservice.AuthzEvaluator
 	logger    *slog.Logger
+	metrics   outbound.MetricsRecorder
+	tracer    outbound.TraceExporter
 }
 
 // NewAuthzAppService creates a new AuthzAppService.
@@ -38,13 +41,29 @@ func NewAuthzAppService(
 		depStore:  depStore,
 		evaluator: evaluator,
 		logger:    logger,
+		metrics:   telemetry.NoopMetricsRecorder{},
+		tracer:    telemetry.NoopTraceExporter{},
 	}
+}
+
+// SetTelemetry injects optional metrics and tracing ports.
+func (s *AuthzAppService) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = telemetry.EnsureMetrics(metrics)
+	s.tracer = telemetry.EnsureTracer(tracer)
 }
 
 // Create creates a new authorization policy.
 func (s *AuthzAppService) Create(ctx context.Context, policy *model.AuthorizationPolicy) error {
+	ctx, span := s.tracer.StartSpan(ctx, "AuthzAppService.Create", map[string]string{
+		"omnimesh.namespace":   policy.Namespace,
+		"omnimesh.policy.name": policy.Name,
+	})
+	defer span.End()
+
 	if policy.Name == "" {
-		return fmt.Errorf("authz create: %w: name is required", domain.ErrInvalidName)
+		err := fmt.Errorf("authz create: %w: name is required", domain.ErrInvalidName)
+		span.SetError(err)
+		return err
 	}
 
 	key := s.policyKey(policy.Namespace, policy.Name)
@@ -77,8 +96,16 @@ func (s *AuthzAppService) Create(ctx context.Context, policy *model.Authorizatio
 
 // Update updates an existing authorization policy.
 func (s *AuthzAppService) Update(ctx context.Context, policy *model.AuthorizationPolicy) error {
+	ctx, span := s.tracer.StartSpan(ctx, "AuthzAppService.Update", map[string]string{
+		"omnimesh.namespace":   policy.Namespace,
+		"omnimesh.policy.name": policy.Name,
+	})
+	defer span.End()
+
 	if policy.Name == "" {
-		return fmt.Errorf("authz update: %w: name is required", domain.ErrInvalidName)
+		err := fmt.Errorf("authz update: %w: name is required", domain.ErrInvalidName)
+		span.SetError(err)
+		return err
 	}
 
 	resource, err := codec.AuthzPolicyToResource(policy)
@@ -139,9 +166,17 @@ func (s *AuthzAppService) List(ctx context.Context, namespace string) ([]*model.
 
 // Delete removes an authorization policy.
 func (s *AuthzAppService) Delete(ctx context.Context, namespace, name string) error {
+	ctx, span := s.tracer.StartSpan(ctx, "AuthzAppService.Delete", map[string]string{
+		"omnimesh.namespace":   namespace,
+		"omnimesh.policy.name": name,
+	})
+	defer span.End()
+
 	key := s.policyKey(namespace, name)
 	if err := s.resources.Delete(ctx, key); err != nil {
-		return fmt.Errorf("authz delete: %w", err)
+		err = fmt.Errorf("authz delete: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	s.logger.Info("authorization policy deleted", "name", name, "namespace", namespace)
@@ -150,12 +185,22 @@ func (s *AuthzAppService) Delete(ctx context.Context, namespace, name string) er
 
 // Evaluate checks whether traffic from source to destination is authorized.
 func (s *AuthzAppService) Evaluate(ctx context.Context, source, destination model.ServiceID) (bool, error) {
+	ctx, span := s.tracer.StartSpan(ctx, "AuthzAppService.Evaluate", map[string]string{
+		"omnimesh.source.service":        source.Name,
+		"omnimesh.source.namespace":      source.Namespace,
+		"omnimesh.destination.service":   destination.Name,
+		"omnimesh.destination.namespace": destination.Namespace,
+	})
+	defer span.End()
+
 	srcPolicies, err := s.List(ctx, source.Namespace)
 	if err != nil {
+		span.SetError(err)
 		return false, err
 	}
 	dstPolicies, err := s.List(ctx, destination.Namespace)
 	if err != nil {
+		span.SetError(err)
 		return false, err
 	}
 
@@ -170,7 +215,13 @@ func (s *AuthzAppService) Evaluate(ctx context.Context, source, destination mode
 	}
 
 	result := s.evaluator.Evaluate(source, destination, allPolicies)
-	return result == domainservice.EvaluateResultAllow, nil
+	allowed := result == domainservice.EvaluateResultAllow
+	if allowed {
+		span.SetAttribute("omnimesh.authz.decision", "allow")
+	} else {
+		span.SetAttribute("omnimesh.authz.decision", "deny")
+	}
+	return allowed, nil
 }
 
 func (s *AuthzAppService) policyKey(namespace, name string) string {

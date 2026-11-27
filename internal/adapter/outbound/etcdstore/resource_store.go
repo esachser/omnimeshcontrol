@@ -18,12 +18,24 @@ const resourcePrefix = "/omnimesh/resources/"
 // EtcdResourceStore implements the ResourceStore outbound port
 // using an embedded etcd instance.
 type EtcdResourceStore struct {
-	client *clientv3.Client
+	client  *clientv3.Client
+	metrics outbound.MetricsRecorder
+	tracer  outbound.TraceExporter
 }
 
 // NewEtcdResourceStore creates a new EtcdResourceStore.
 func NewEtcdResourceStore(client *clientv3.Client) *EtcdResourceStore {
-	return &EtcdResourceStore{client: client}
+	return &EtcdResourceStore{
+		client:  client,
+		metrics: noopMetrics{},
+		tracer:  noopTracer{},
+	}
+}
+
+// SetTelemetry configures optional metrics and tracing recorders.
+func (s *EtcdResourceStore) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = ensureMetrics(metrics)
+	s.tracer = ensureTracer(tracer)
 }
 
 // fullKey builds the full etcd key for a resource.
@@ -33,10 +45,16 @@ func (s *EtcdResourceStore) fullKey(key string) string {
 
 // Put creates or updates a resource, returning the new revision.
 func (s *EtcdResourceStore) Put(ctx context.Context, key string, resource *model.Resource) (int64, error) {
+	ctx, span := startEtcdSpan(ctx, s.tracer, "put", key)
+	defer span.End()
+
 	now := time.Now()
 	// Get current revision
+	getStart := time.Now()
 	respGet, err := s.client.Get(ctx, s.fullKey(key))
+	recordEtcdOp(ctx, s.metrics, nil, "get", getStart, err)
 	if err != nil {
+		span.SetError(err)
 		return 0, fmt.Errorf("resource store: get %q: %w", key, err)
 	}
 	if len(respGet.Kvs) > 0 {
@@ -53,10 +71,13 @@ func (s *EtcdResourceStore) Put(ctx context.Context, key string, resource *model
 	resource.Metadata.UpdatedAt = uint64(now.UnixMilli())
 	data, err := json.Marshal(resource)
 	if err != nil {
+		span.SetError(err)
 		return 0, fmt.Errorf("resource store: marshal: %w", err)
 	}
 
+	putStart := time.Now()
 	respPut, err := s.client.Put(ctx, s.fullKey(key), string(data))
+	recordEtcdOp(ctx, s.metrics, span, "put", putStart, err)
 	if err != nil {
 		return 0, fmt.Errorf("resource store: put %q: %w", key, err)
 	}
@@ -65,7 +86,12 @@ func (s *EtcdResourceStore) Put(ctx context.Context, key string, resource *model
 
 // Get retrieves a resource by key.
 func (s *EtcdResourceStore) Get(ctx context.Context, key string) (*model.Resource, error) {
+	ctx, span := startEtcdSpan(ctx, s.tracer, "get", key)
+	defer span.End()
+
+	start := time.Now()
 	resp, err := s.client.Get(ctx, s.fullKey(key))
+	recordEtcdOp(ctx, s.metrics, span, "get", start, err)
 	if err != nil {
 		return nil, fmt.Errorf("resource store: get %q: %w", key, err)
 	}
@@ -75,6 +101,7 @@ func (s *EtcdResourceStore) Get(ctx context.Context, key string) (*model.Resourc
 
 	var resource model.Resource
 	if err := json.Unmarshal(resp.Kvs[0].Value, &resource); err != nil {
+		span.SetError(err)
 		return nil, fmt.Errorf("resource store: unmarshal %q: %w", key, err)
 	}
 	resource.Metadata.Revision = resp.Kvs[0].ModRevision
@@ -83,7 +110,12 @@ func (s *EtcdResourceStore) Get(ctx context.Context, key string) (*model.Resourc
 
 // List retrieves all resources under a key prefix.
 func (s *EtcdResourceStore) List(ctx context.Context, prefix string) ([]*model.Resource, error) {
+	ctx, span := startEtcdSpan(ctx, s.tracer, "get", prefix)
+	defer span.End()
+
+	start := time.Now()
 	resp, err := s.client.Get(ctx, s.fullKey(prefix), clientv3.WithPrefix())
+	recordEtcdOp(ctx, s.metrics, span, "get", start, err)
 	if err != nil {
 		return nil, fmt.Errorf("resource store: list %q: %w", prefix, err)
 	}
@@ -92,6 +124,7 @@ func (s *EtcdResourceStore) List(ctx context.Context, prefix string) ([]*model.R
 	for _, kv := range resp.Kvs {
 		var resource model.Resource
 		if err := json.Unmarshal(kv.Value, &resource); err != nil {
+			span.SetError(err)
 			return nil, fmt.Errorf("resource store: unmarshal: %w", err)
 		}
 		resource.Metadata.Revision = kv.ModRevision
@@ -102,7 +135,12 @@ func (s *EtcdResourceStore) List(ctx context.Context, prefix string) ([]*model.R
 
 // Delete removes a resource by key.
 func (s *EtcdResourceStore) Delete(ctx context.Context, key string) error {
+	ctx, span := startEtcdSpan(ctx, s.tracer, "delete", key)
+	defer span.End()
+
+	start := time.Now()
 	resp, err := s.client.Delete(ctx, s.fullKey(key))
+	recordEtcdOp(ctx, s.metrics, span, "delete", start, err)
 	if err != nil {
 		return fmt.Errorf("resource store: delete %q: %w", key, err)
 	}
@@ -114,7 +152,12 @@ func (s *EtcdResourceStore) Delete(ctx context.Context, key string) error {
 
 // DeleteByPrefix removes all resources under a key prefix.
 func (s *EtcdResourceStore) DeleteByPrefix(ctx context.Context, prefix string) error {
+	ctx, span := startEtcdSpan(ctx, s.tracer, "delete", prefix)
+	defer span.End()
+
+	start := time.Now()
 	_, err := s.client.Delete(ctx, s.fullKey(prefix), clientv3.WithPrefix())
+	recordEtcdOp(ctx, s.metrics, span, "delete", start, err)
 	if err != nil {
 		return fmt.Errorf("resource store: delete by prefix %q: %w", prefix, err)
 	}
@@ -123,6 +166,7 @@ func (s *EtcdResourceStore) DeleteByPrefix(ctx context.Context, prefix string) e
 
 // Watch returns a channel of events for resources under the given prefix.
 func (s *EtcdResourceStore) Watch(ctx context.Context, prefix string) (<-chan outbound.ResourceEvent, error) {
+	s.metrics.IncrCounter(ctx, model.MetricCPEtcdOperationsTotal, map[string]string{"operation": "watch"})
 	watchCh := s.client.Watch(ctx, s.fullKey(prefix), clientv3.WithPrefix(), clientv3.WithPrevKV())
 
 	eventCh := make(chan outbound.ResourceEvent, 64)
@@ -176,16 +220,22 @@ func (s *EtcdResourceStore) CompareAndPut(
 	expectedRev int64,
 	resource *model.Resource,
 ) (int64, error) {
+	ctx, span := startEtcdSpan(ctx, s.tracer, "txn", key)
+	defer span.End()
+
 	data, err := json.Marshal(resource)
 	if err != nil {
+		span.SetError(err)
 		return 0, fmt.Errorf("resource store: marshal: %w", err)
 	}
 
 	fullKey := s.fullKey(key)
+	start := time.Now()
 	txnResp, err := s.client.Txn(ctx).
 		If(clientv3.Compare(clientv3.ModRevision(fullKey), "=", expectedRev)).
 		Then(clientv3.OpPut(fullKey, string(data))).
 		Commit()
+	recordEtcdOp(ctx, s.metrics, span, "txn", start, err)
 	if err != nil {
 		return 0, fmt.Errorf("resource store: compare-and-put %q: %w", key, err)
 	}

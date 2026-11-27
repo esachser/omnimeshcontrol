@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
+	"github.com/esachser/omnimeshcontrol/internal/application/telemetry"
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/domain/service"
@@ -20,6 +22,11 @@ type NodeAppService struct {
 	tracker      service.NodeTracker
 	routeManager inbound.RouteManager
 	logger       *slog.Logger
+	metrics      outbound.MetricsRecorder
+	tracer       outbound.TraceExporter
+
+	mu            sync.Mutex
+	nodePlatforms map[string]string
 }
 
 // NewNodeAppService creates a new NodeAppService.
@@ -28,34 +35,70 @@ func NewNodeAppService(state outbound.StateStore, tracker service.NodeTracker, r
 		logger = slog.Default()
 	}
 	nap := &NodeAppService{
-		state:        state,
-		tracker:      tracker,
-		routeManager: routeManager,
-		logger:       logger,
+		state:         state,
+		tracker:       tracker,
+		routeManager:  routeManager,
+		logger:        logger,
+		metrics:       telemetry.NoopMetricsRecorder{},
+		tracer:        telemetry.NoopTraceExporter{},
+		nodePlatforms: make(map[string]string),
 	}
 	tracker.RegisterCallback(func(ctx context.Context, nodeID string) {
+		nap.mu.Lock()
+		platform := nap.nodePlatforms[nodeID]
+		delete(nap.nodePlatforms, nodeID)
+		nap.mu.Unlock()
+		if platform == "" {
+			platform = "unknown"
+		}
+		nap.metrics.IncrCounter(ctx, model.MetricCPNodesDisconnections, map[string]string{
+			"node_id":  nodeID,
+			"platform": platform,
+		})
 		nap.logger.Warn("node lost (lease expired or revoked)", "nodeID", nodeID)
 	})
 	return nap
 }
 
+// SetTelemetry injects optional metrics and tracing ports.
+func (s *NodeAppService) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = telemetry.EnsureMetrics(metrics)
+	s.tracer = telemetry.EnsureTracer(tracer)
+}
+
 // RegisterNode registers a new agent node.
 func (s *NodeAppService) RegisterNode(ctx context.Context, node *model.Node) error {
+	ctx, span := s.tracer.StartSpan(ctx, "NodeAppService.RegisterNode", map[string]string{
+		"omnimesh.node":     node.ID,
+		"omnimesh.platform": node.Platform.String(),
+	})
+	defer span.End()
+
 	if node.ID == "" {
-		return fmt.Errorf("node register: %w: node ID is required", domain.ErrInvalidName)
+		err := fmt.Errorf("node register: %w: node ID is required", domain.ErrInvalidName)
+		span.SetError(err)
+		return err
 	}
 
 	node.Status = model.NodeStatusActive
 
 	leaseID, err := s.tracker.TrackNode(node.ID)
 	if err != nil {
-		return fmt.Errorf("node register: %w", err)
+		err = fmt.Errorf("node register: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	if err := s.state.PersistNode(ctx, node.ID, node, leaseID); err != nil {
 		s.tracker.UntrackNode(node.ID)
-		return fmt.Errorf("node register: %w", err)
+		err = fmt.Errorf("node register: %w", err)
+		span.SetError(err)
+		return err
 	}
+
+	s.mu.Lock()
+	s.nodePlatforms[node.ID] = node.Platform.String()
+	s.mu.Unlock()
 
 	s.logger.Info("node registered",
 		"nodeID", node.ID,
@@ -67,6 +110,11 @@ func (s *NodeAppService) RegisterNode(ctx context.Context, node *model.Node) err
 
 // DeregisterNode gracefully deregisters a node by revoking its etcd lease.
 func (s *NodeAppService) DeregisterNode(ctx context.Context, nodeID string) error {
+	_, span := s.tracer.StartSpan(ctx, "NodeAppService.DeregisterNode", map[string]string{
+		"omnimesh.node": nodeID,
+	})
+	defer span.End()
+
 	s.tracker.UntrackNode(nodeID)
 
 	s.logger.Info("node deregistered", "nodeID", nodeID)
@@ -75,16 +123,25 @@ func (s *NodeAppService) DeregisterNode(ctx context.Context, nodeID string) erro
 
 // DrainNode initiates graceful node draining.
 func (s *NodeAppService) DrainNode(ctx context.Context, nodeID string) error {
+	ctx, span := s.tracer.StartSpan(ctx, "NodeAppService.DrainNode", map[string]string{
+		"omnimesh.node": nodeID,
+	})
+	defer span.End()
+
 	node, err := s.state.GetNode(ctx, nodeID)
 	if err != nil {
-		return fmt.Errorf("drain node: %w", err)
+		err = fmt.Errorf("drain node: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	node.Status = model.NodeStatusDraining
 
 	leaseID := s.tracker.LeaseID(nodeID)
 	if err := s.state.PersistNode(ctx, nodeID, node, leaseID); err != nil {
-		return fmt.Errorf("drain node: persist: %w", err)
+		err = fmt.Errorf("drain node: persist: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	s.tracker.OnDisconnect(nodeID)

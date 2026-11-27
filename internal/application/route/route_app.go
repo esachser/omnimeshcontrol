@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"github.com/esachser/omnimeshcontrol/internal/application/telemetry"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/domain/service"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
@@ -19,6 +21,8 @@ type RouteAppService struct {
 	targets     inbound.TargetManager
 	tracker     service.NodeTracker
 	logger      *slog.Logger
+	metrics     outbound.MetricsRecorder
+	tracer      outbound.TraceExporter
 }
 
 // NewRouteAppService creates a new RouteAppService.
@@ -31,7 +35,15 @@ func NewRouteAppService(resources outbound.ResourceStore, state outbound.StateSt
 		state:     state,
 		targets:   targets,
 		logger:    logger,
+		metrics:   telemetry.NoopMetricsRecorder{},
+		tracer:    telemetry.NoopTraceExporter{},
 	}
+}
+
+// SetTelemetry injects optional metrics and tracing ports.
+func (s *RouteAppService) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = telemetry.EnsureMetrics(metrics)
+	s.tracer = telemetry.EnsureTracer(tracer)
 }
 
 // SetScopeDistributor sets the scope distributor.
@@ -46,8 +58,17 @@ func (s *RouteAppService) SetNodeTracker(t service.NodeTracker) {
 
 // Apply creates or updates a target route.
 func (s *RouteAppService) Apply(ctx context.Context, route *model.TargetRoute) error {
+	ctx, span := s.tracer.StartSpan(ctx, "RouteAppService.Apply", map[string]string{
+		"omnimesh.namespace":           route.Namespace,
+		"omnimesh.node":                route.NodeID,
+		"omnimesh.destination.service": route.TargetService,
+	})
+	defer span.End()
+
 	if route.Name == "" || route.Namespace == "" || route.NodeID == "" || route.TargetService == "" {
-		return fmt.Errorf("route apply: name, namespace, nodeID and targetService are required")
+		err := fmt.Errorf("route apply: name, namespace, nodeID and targetService are required")
+		span.SetError(err)
+		return err
 	}
 
 	var leaseID int64
@@ -56,8 +77,14 @@ func (s *RouteAppService) Apply(ctx context.Context, route *model.TargetRoute) e
 	}
 
 	if err := s.state.PersistTargetRoute(ctx, route, leaseID); err != nil {
-		return fmt.Errorf("route apply: %w", err)
+		err = fmt.Errorf("route apply: %w", err)
+		span.SetError(err)
+		return err
 	}
+
+	s.metrics.IncrCounter(ctx, model.MetricCPRoutesAnnouncementsTotal, map[string]string{
+		"transport": "grpc",
+	})
 
 	s.logger.Info("target route applied", "namespace", route.Namespace, "name", route.Name, "targetService", route.TargetService)
 
@@ -78,12 +105,25 @@ func (s *RouteAppService) List(ctx context.Context, namespace string) ([]*model.
 
 // Delete removes a target route.
 func (s *RouteAppService) Delete(ctx context.Context, namespace, name, serviceName, nodeId string) error {
+	ctx, span := s.tracer.StartSpan(ctx, "RouteAppService.Delete", map[string]string{
+		"omnimesh.namespace":           namespace,
+		"omnimesh.node":                nodeId,
+		"omnimesh.destination.service": serviceName,
+	})
+	defer span.End()
+
 	route, getErr := s.Get(ctx, namespace, name, serviceName, nodeId)
 
 	err := s.state.DeleteTargetRoute(ctx, namespace, nodeId, serviceName, name)
 	if err != nil {
-		return fmt.Errorf("route delete: %w", err)
+		err = fmt.Errorf("route delete: %w", err)
+		span.SetError(err)
+		return err
 	}
+
+	s.metrics.IncrCounter(ctx, model.MetricCPRoutesWithdrawalsTotal, map[string]string{
+		"transport": "grpc",
+	})
 
 	s.logger.Info("target route deleted", "namespace", namespace, "name", name)
 
@@ -147,9 +187,12 @@ func (s *RouteAppService) broadcastUpdate(ctx context.Context, route model.Targe
 		Routes: []model.TargetRoute{route},
 	}
 
+	distStart := time.Now()
 	if err := s.distributor.BroadcastUpdate(ctx, update); err != nil {
 		s.logger.Warn("failed to broadcast route scope update", "route", route.Name, "error", err)
+		return
 	}
+	s.metrics.RecordHistogram(ctx, model.MetricCPRoutesDistributionDurationMs, float64(time.Since(distStart).Microseconds())/1000.0, nil)
 }
 
 // Compile-time interface check.

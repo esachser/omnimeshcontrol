@@ -83,4 +83,6 @@ var (
 	ErrInvalidNamespace = errors.New("invalid namespace")
 	// ErrInvalidSelectors indicates an invalid workload selector or selector set configuration.
 	ErrInvalidSelectors = errors.New("invalid workload selectors")
+	// ErrInvalidTelemetryConfig indicates an invalid observability/telemetry configuration.
+	ErrInvalidTelemetryConfig = errors.New("invalid telemetry configuration")
 )

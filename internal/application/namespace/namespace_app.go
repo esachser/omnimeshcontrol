@@ -7,6 +7,7 @@ import (
 	"net/netip"
 
 	"github.com/esachser/omnimeshcontrol/internal/application/mapper"
+	"github.com/esachser/omnimeshcontrol/internal/application/telemetry"
 	"github.com/esachser/omnimeshcontrol/internal/domain"
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/inbound"
@@ -18,6 +19,8 @@ type NamespaceAppService struct {
 	resources   outbound.ResourceStore
 	defaultCIDR netip.Prefix
 	logger      *slog.Logger
+	metrics     outbound.MetricsRecorder
+	tracer      outbound.TraceExporter
 }
 
 // NewNamespaceAppService creates a new NamespaceAppService.
@@ -30,13 +33,28 @@ func NewNamespaceAppService(resources outbound.ResourceStore, defaultCIDR netip.
 		resources:   resources,
 		defaultCIDR: defaultCIDR,
 		logger:      logger,
+		metrics:     telemetry.NoopMetricsRecorder{},
+		tracer:      telemetry.NoopTraceExporter{},
 	}
+}
+
+// SetTelemetry injects optional metrics and tracing ports.
+func (s *NamespaceAppService) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = telemetry.EnsureMetrics(metrics)
+	s.tracer = telemetry.EnsureTracer(tracer)
 }
 
 // Apply creates or updates a namespace.
 func (s *NamespaceAppService) Apply(ctx context.Context, namespace *model.Namespace) error {
+	ctx, span := s.tracer.StartSpan(ctx, "NamespaceAppService.Apply", map[string]string{
+		"omnimesh.namespace": namespace.Name,
+	})
+	defer span.End()
+
 	if namespace.Name == "" {
-		return fmt.Errorf("namespace apply: %w: name is required", domain.ErrInvalidName)
+		err := fmt.Errorf("namespace apply: %w: name is required", domain.ErrInvalidName)
+		span.SetError(err)
+		return err
 	}
 
 	key := "core.omnimesh.io/v1/Namespace/" + namespace.Name
@@ -113,22 +131,33 @@ func (s *NamespaceAppService) List(ctx context.Context) ([]*model.Namespace, err
 
 // Delete removes a namespace.
 func (s *NamespaceAppService) Delete(ctx context.Context, name string, force bool) error {
+	ctx, span := s.tracer.StartSpan(ctx, "NamespaceAppService.Delete", map[string]string{
+		"omnimesh.namespace": name,
+	})
+	defer span.End()
+
 	if !force {
 		// Check namespace is empty (no services).
 		svcPrefix := fmt.Sprintf("core.omnimesh.io/v1/Service/%s/", name)
 		services, err := s.resources.List(ctx, svcPrefix)
 		if err != nil {
-			return fmt.Errorf("namespace delete: %w", err)
+			err = fmt.Errorf("namespace delete: %w", err)
+			span.SetError(err)
+			return err
 		}
 		if len(services) > 0 {
-			return fmt.Errorf("namespace delete %q: %w (contains %d service(s))",
+			err = fmt.Errorf("namespace delete %q: %w (contains %d service(s))",
 				name, domain.ErrNamespaceNotEmpty, len(services))
+			span.SetError(err)
+			return err
 		}
 	}
 
 	key := "core.omnimesh.io/v1/Namespace/" + name
 	if err := s.resources.Delete(ctx, key); err != nil {
-		return fmt.Errorf("namespace delete: %w", err)
+		err = fmt.Errorf("namespace delete: %w", err)
+		span.SetError(err)
+		return err
 	}
 
 	s.logger.Info("namespace deleted", "name", name, "force", force)

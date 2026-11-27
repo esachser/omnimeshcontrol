@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
@@ -14,12 +15,24 @@ const dependencyPrefix = "/omnimesh/state/dependencies/"
 
 // EtcdDependencyStore implements the DependencyStore outbound port.
 type EtcdDependencyStore struct {
-	client *clientv3.Client
+	client  *clientv3.Client
+	metrics outbound.MetricsRecorder
+	tracer  outbound.TraceExporter
 }
 
 // NewEtcdDependencyStore creates a new EtcdDependencyStore.
 func NewEtcdDependencyStore(client *clientv3.Client) *EtcdDependencyStore {
-	return &EtcdDependencyStore{client: client}
+	return &EtcdDependencyStore{
+		client:  client,
+		metrics: noopMetrics{},
+		tracer:  noopTracer{},
+	}
+}
+
+// SetTelemetry configures optional metrics and tracing recorders.
+func (s *EtcdDependencyStore) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = ensureMetrics(metrics)
+	s.tracer = ensureTracer(tracer)
 }
 
 // PutDependencies persists service dependencies.
@@ -32,7 +45,13 @@ func (s *EtcdDependencyStore) PutDependencies(ctx context.Context, deps *model.S
 		return fmt.Errorf("dependency store: marshal: %w", err)
 	}
 	key := dependencyKey(deps.ServiceID)
-	if _, err := s.client.Put(ctx, key, string(data)); err != nil {
+	ctx, span := startEtcdSpan(ctx, s.tracer, "put", key)
+	defer span.End()
+
+	start := time.Now()
+	_, err = s.client.Put(ctx, key, string(data))
+	recordEtcdOp(ctx, s.metrics, span, "put", start, err)
+	if err != nil {
 		return fmt.Errorf("dependency store: put %q: %w", key, err)
 	}
 	return nil
@@ -41,7 +60,12 @@ func (s *EtcdDependencyStore) PutDependencies(ctx context.Context, deps *model.S
 // GetDependencies retrieves dependencies for a service.
 func (s *EtcdDependencyStore) GetDependencies(ctx context.Context, serviceID model.ServiceID) (*model.ServiceDependencies, error) {
 	key := dependencyKey(serviceID)
+	ctx, span := startEtcdSpan(ctx, s.tracer, "get", key)
+	defer span.End()
+
+	start := time.Now()
 	resp, err := s.client.Get(ctx, key)
+	recordEtcdOp(ctx, s.metrics, span, "get", start, err)
 	if err != nil {
 		return nil, fmt.Errorf("dependency store: get %q: %w", key, err)
 	}
@@ -51,6 +75,7 @@ func (s *EtcdDependencyStore) GetDependencies(ctx context.Context, serviceID mod
 
 	var deps model.ServiceDependencies
 	if err := json.Unmarshal(resp.Kvs[0].Value, &deps); err != nil {
+		span.SetError(err)
 		return nil, fmt.Errorf("dependency store: unmarshal %q: %w", key, err)
 	}
 	return &deps, nil
@@ -58,6 +83,7 @@ func (s *EtcdDependencyStore) GetDependencies(ctx context.Context, serviceID mod
 
 // WatchDependencies watches for dependency updates.
 func (s *EtcdDependencyStore) WatchDependencies(ctx context.Context) (<-chan outbound.DependencyEvent, error) {
+	s.metrics.IncrCounter(ctx, model.MetricCPEtcdOperationsTotal, map[string]string{"operation": "watch"})
 	watchCh := s.client.Watch(ctx, dependencyPrefix, clientv3.WithPrefix(), clientv3.WithPrevKV())
 
 	eventCh := make(chan outbound.DependencyEvent, 64)

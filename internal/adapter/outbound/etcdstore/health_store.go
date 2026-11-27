@@ -15,12 +15,24 @@ const endpointHealthPrefix = "/omnimesh/state/health/"
 
 // EtcdEndpointHealthStore implements the EndpointHealthStore outbound port.
 type EtcdEndpointHealthStore struct {
-	client *clientv3.Client
+	client  *clientv3.Client
+	metrics outbound.MetricsRecorder
+	tracer  outbound.TraceExporter
 }
 
 // NewEtcdEndpointHealthStore creates a new EtcdEndpointHealthStore.
 func NewEtcdEndpointHealthStore(client *clientv3.Client) *EtcdEndpointHealthStore {
-	return &EtcdEndpointHealthStore{client: client}
+	return &EtcdEndpointHealthStore{
+		client:  client,
+		metrics: noopMetrics{},
+		tracer:  noopTracer{},
+	}
+}
+
+// SetTelemetry configures optional metrics and tracing recorders.
+func (s *EtcdEndpointHealthStore) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = ensureMetrics(metrics)
+	s.tracer = ensureTracer(tracer)
 }
 
 // PutEndpointHealth persists an endpoint health report.
@@ -38,11 +50,17 @@ func (s *EtcdEndpointHealthStore) PutEndpointHealth(ctx context.Context, health 
 		return fmt.Errorf("endpoint health store: marshal: %w", err)
 	}
 	key := endpointHealthKey(health.ServiceID, health.RouteName)
+	ctx, span := startEtcdSpan(ctx, s.tracer, "put", key)
+	defer span.End()
+
 	opts := []clientv3.OpOption{}
 	if leaseID != 0 {
 		opts = append(opts, clientv3.WithLease(clientv3.LeaseID(leaseID)))
 	}
-	if _, err := s.client.Put(ctx, key, string(data), opts...); err != nil {
+	start := time.Now()
+	_, err = s.client.Put(ctx, key, string(data), opts...)
+	recordEtcdOp(ctx, s.metrics, span, "put", start, err)
+	if err != nil {
 		return fmt.Errorf("endpoint health store: put %q: %w", key, err)
 	}
 	return nil
@@ -51,7 +69,12 @@ func (s *EtcdEndpointHealthStore) PutEndpointHealth(ctx context.Context, health 
 // GetEndpointHealth retrieves a single endpoint health record.
 func (s *EtcdEndpointHealthStore) GetEndpointHealth(ctx context.Context, serviceID model.ServiceID, addr string) (*model.EndpointHealth, error) {
 	key := endpointHealthKey(serviceID, addr)
+	ctx, span := startEtcdSpan(ctx, s.tracer, "get", key)
+	defer span.End()
+
+	start := time.Now()
 	resp, err := s.client.Get(ctx, key)
+	recordEtcdOp(ctx, s.metrics, span, "get", start, err)
 	if err != nil {
 		return nil, fmt.Errorf("endpoint health store: get %q: %w", key, err)
 	}
@@ -61,6 +84,7 @@ func (s *EtcdEndpointHealthStore) GetEndpointHealth(ctx context.Context, service
 
 	var health model.EndpointHealth
 	if err := json.Unmarshal(resp.Kvs[0].Value, &health); err != nil {
+		span.SetError(err)
 		return nil, fmt.Errorf("endpoint health store: unmarshal %q: %w", key, err)
 	}
 	return &health, nil
@@ -69,7 +93,12 @@ func (s *EtcdEndpointHealthStore) GetEndpointHealth(ctx context.Context, service
 // ListEndpointHealth lists all endpoint health records for a service.
 func (s *EtcdEndpointHealthStore) ListEndpointHealth(ctx context.Context, serviceID model.ServiceID) ([]*model.EndpointHealth, error) {
 	prefix := endpointHealthPrefix + serviceID.Namespace + "/" + serviceID.Name + "/"
+	ctx, span := startEtcdSpan(ctx, s.tracer, "get", prefix)
+	defer span.End()
+
+	start := time.Now()
 	resp, err := s.client.Get(ctx, prefix, clientv3.WithPrefix())
+	recordEtcdOp(ctx, s.metrics, span, "get", start, err)
 	if err != nil {
 		return nil, fmt.Errorf("endpoint health store: list %q: %w", prefix, err)
 	}
@@ -78,6 +107,7 @@ func (s *EtcdEndpointHealthStore) ListEndpointHealth(ctx context.Context, servic
 	for _, kv := range resp.Kvs {
 		var health model.EndpointHealth
 		if err := json.Unmarshal(kv.Value, &health); err != nil {
+			span.SetError(err)
 			return nil, fmt.Errorf("endpoint health store: unmarshal: %w", err)
 		}
 		records = append(records, &health)
@@ -87,6 +117,7 @@ func (s *EtcdEndpointHealthStore) ListEndpointHealth(ctx context.Context, servic
 
 // WatchEndpointHealth watches health updates under the health prefix.
 func (s *EtcdEndpointHealthStore) WatchEndpointHealth(ctx context.Context) (<-chan outbound.EndpointHealthEvent, error) {
+	s.metrics.IncrCounter(ctx, model.MetricCPEtcdOperationsTotal, map[string]string{"operation": "watch"})
 	watchCh := s.client.Watch(ctx, endpointHealthPrefix, clientv3.WithPrefix(), clientv3.WithPrevKV())
 
 	eventCh := make(chan outbound.EndpointHealthEvent, 64)

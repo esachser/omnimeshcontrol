@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
 	"time"
@@ -31,6 +32,8 @@ type EtcdStateStore struct {
 	session  *concurrency.Session
 	election *concurrency.Election
 	isLeader bool
+	metrics  outbound.MetricsRecorder
+	tracer   outbound.TraceExporter
 }
 
 // NewEtcdStateStore creates a new EtcdStateStore.
@@ -46,7 +49,15 @@ func NewEtcdStateStore(client *clientv3.Client) (*EtcdStateStore, error) {
 		client:   client,
 		session:  session,
 		election: election,
+		metrics:  noopMetrics{},
+		tracer:   noopTracer{},
 	}, nil
+}
+
+// SetTelemetry configures optional metrics and tracing recorders.
+func (s *EtcdStateStore) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	s.metrics = ensureMetrics(metrics)
+	s.tracer = ensureTracer(tracer)
 }
 
 // Campaign starts a leader election campaign. Blocks until elected or context is cancelled.
@@ -74,14 +85,33 @@ func (s *EtcdStateStore) Resign(ctx context.Context) error {
 //
 // All writes use etcd Txn for distributed lock-free safety.
 func (s *EtcdStateStore) AllocateIP(ctx context.Context, id model.ServiceID, cidr netip.Prefix) (netip.Addr, error) {
+	ctx, span := s.tracer.StartSpan(ctx, "etcd.allocate_ip", map[string]string{
+		"omnimesh.service":   id.Name,
+		"omnimesh.namespace": id.Namespace,
+	})
+	defer span.End()
+
+	recordAllocErr := func(errType string, err error) {
+		span.SetError(err)
+		s.metrics.IncrCounter(ctx, model.MetricCPIpamAllocationErrors, map[string]string{
+			"error_type": errType,
+		})
+	}
+
 	if id.Namespace == "" {
-		return netip.Addr{}, fmt.Errorf("state store: allocate IP: %w", domain.ErrInvalidNamespace)
+		err := fmt.Errorf("state store: allocate IP: %w", domain.ErrInvalidNamespace)
+		recordAllocErr("invalid", err)
+		return netip.Addr{}, err
 	}
 	if id.Name == "" {
-		return netip.Addr{}, fmt.Errorf("state store: allocate IP: %w", domain.ErrInvalidName)
+		err := fmt.Errorf("state store: allocate IP: %w", domain.ErrInvalidName)
+		recordAllocErr("invalid", err)
+		return netip.Addr{}, err
 	}
 	if !cidr.IsValid() {
-		return netip.Addr{}, fmt.Errorf("state store: allocate IP: %w", domain.ErrInvalidCIDR)
+		err := fmt.Errorf("state store: allocate IP: %w", domain.ErrInvalidCIDR)
+		recordAllocErr("invalid", err)
+		return netip.Addr{}, err
 	}
 
 	allocKey := ipAllocPrefix + id.String()
@@ -89,17 +119,23 @@ func (s *EtcdStateStore) AllocateIP(ctx context.Context, id model.ServiceID, cid
 	nsFreeKey := ipFreePrefix + id.Namespace
 
 	// Step 1: Check if already allocated.
+	getStart := time.Now()
 	resp, err := s.client.Get(ctx, allocKey)
+	recordEtcdOp(ctx, s.metrics, nil, "get", getStart, err)
 	if err != nil {
+		recordAllocErr("storage", err)
 		return netip.Addr{}, fmt.Errorf("state store: get allocation %q: %w", id, err)
 	}
 	if len(resp.Kvs) > 0 {
-		return netip.Addr{}, fmt.Errorf("state store: allocate IP for %q: %w", id, domain.ErrIPConflict)
+		err := fmt.Errorf("state store: allocate IP for %q: %w", id, domain.ErrIPConflict)
+		recordAllocErr("conflict", err)
+		return netip.Addr{}, err
 	}
 
 	// Step 2: Try to pop from namespace free list first (reuse deleted IPs).
 	addr, fromFree, err := s.popFreeIP(ctx, nsFreeKey, cidr)
 	if err != nil {
+		recordAllocErr("storage", err)
 		return netip.Addr{}, fmt.Errorf("state store: pop free IP: %w", err)
 	}
 
@@ -107,23 +143,33 @@ func (s *EtcdStateStore) AllocateIP(ctx context.Context, id model.ServiceID, cid
 	if !fromFree {
 		addr, err = s.allocateFromCounter(ctx, nsNextKey, cidr)
 		if err != nil {
+			errType := "storage"
+			if errors.Is(err, domain.ErrIPExhausted) {
+				errType = "exhaustion"
+			}
+			recordAllocErr(errType, err)
 			return netip.Addr{}, err
 		}
 	}
 
 	// Step 4: Atomically write the service→IP mapping (only if key doesn't exist).
 	addrBytes := addr.As4()
+	txnStart := time.Now()
 	txnResp, err := s.client.Txn(ctx).
 		If(clientv3.Compare(clientv3.CreateRevision(allocKey), "=", 0)).
 		Then(clientv3.OpPut(allocKey, string(addrBytes[:]))).
 		Commit()
+	recordEtcdOp(ctx, s.metrics, nil, "txn", txnStart, err)
 	if err != nil {
+		recordAllocErr("storage", err)
 		return netip.Addr{}, fmt.Errorf("state store: txn allocate IP: %w", err)
 	}
 	if !txnResp.Succeeded {
 		// Another instance allocated for this service concurrently — return the freed IP.
 		s.pushFreeIP(ctx, nsFreeKey, addr)
-		return netip.Addr{}, fmt.Errorf("state store: allocate IP for %q: %w", id, domain.ErrIPConflict)
+		err := fmt.Errorf("state store: allocate IP for %q: %w", id, domain.ErrIPConflict)
+		recordAllocErr("conflict", err)
+		return netip.Addr{}, err
 	}
 
 	return addr, nil

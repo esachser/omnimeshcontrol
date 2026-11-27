@@ -5,9 +5,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -17,9 +19,13 @@ import (
 
 	omnimeshv1 "github.com/esachser/omnimeshcontrol/api/gen/omnimesh/v1"
 	"github.com/esachser/omnimeshcontrol/internal/adapter/inbound/grpcadapter"
+	"github.com/esachser/omnimeshcontrol/internal/adapter/inbound/httpadapter"
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/etcddns"
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/etcdstore"
+	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/otelmetrics"
+	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/oteltracing"
 	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/spire"
+	"github.com/esachser/omnimeshcontrol/internal/adapter/outbound/telemetrycfg"
 	"github.com/esachser/omnimeshcontrol/internal/application/authz"
 	"github.com/esachser/omnimeshcontrol/internal/application/health"
 	"github.com/esachser/omnimeshcontrol/internal/application/namespace"
@@ -28,6 +34,7 @@ import (
 	"github.com/esachser/omnimeshcontrol/internal/application/route"
 	"github.com/esachser/omnimeshcontrol/internal/application/scope"
 	"github.com/esachser/omnimeshcontrol/internal/application/service"
+	"github.com/esachser/omnimeshcontrol/internal/application/telemetry"
 	domainservice "github.com/esachser/omnimeshcontrol/internal/domain/service"
 	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 	"google.golang.org/grpc"
@@ -89,6 +96,22 @@ func run(logger *slog.Logger) error {
 		AutoSyncInterval:   mustParseDuration("OMNIMESH_ETCD_AUTOSYNC", 0),
 	}
 
+	// --- Telemetry Configuration & SDK Setup ---
+	telCfg, err := telemetrycfg.LoadFromEnv()
+	if err != nil {
+		return fmt.Errorf("load telemetry config: %w", err)
+	}
+
+	metricsRec, err := otelmetrics.NewRecorder(ctx, telCfg, logger.WithGroup("otelmetrics"))
+	if err != nil {
+		return fmt.Errorf("init metrics recorder: %w", err)
+	}
+	traceExp, err := oteltracing.NewExporter(ctx, telCfg, logger.WithGroup("oteltracing"))
+	if err != nil {
+		_ = metricsRec.Shutdown(context.Background())
+		return fmt.Errorf("init trace exporter: %w", err)
+	}
+
 	// --- Connect to external etcd ---
 	logger.Info("connecting to etcd",
 		"endpoints", etcdCfg.Endpoints,
@@ -105,20 +128,25 @@ func run(logger *slog.Logger) error {
 
 	// --- Wire outbound adapters ---
 	resourceStore := etcdstore.NewEtcdResourceStore(etcdClient)
+	resourceStore.SetTelemetry(metricsRec, traceExp)
 
 	stateStore, err := etcdstore.NewEtcdStateStore(etcdClient)
 	if err != nil {
 		return fmt.Errorf("create state store: %w", err)
 	}
 	defer stateStore.Close()
+	stateStore.SetTelemetry(metricsRec, traceExp)
 
 	targetApp := route.NewTargetAppService(resourceStore, logger)
 
 	dnsManager := etcddns.NewEtcdDNSRecordManager(etcdClient, dnsZone)
 	routeDistributor := etcdstore.NewEtcdRouteDistributor(stateStore, targetApp, logger.WithGroup("route_dist"))
+	routeDistributor.SetTelemetry(metricsRec, traceExp)
 	policyStore := etcdstore.NewEtcdTrafficPolicyStore(resourceStore)
 	healthStore := etcdstore.NewEtcdEndpointHealthStore(etcdClient)
+	healthStore.SetTelemetry(metricsRec, traceExp)
 	depStore := etcdstore.NewEtcdDependencyStore(etcdClient)
+	depStore.SetTelemetry(metricsRec, traceExp)
 
 	// --- Parse default CIDR (used for namespaces that don't specify one) ---
 	defaultCIDR, err := netip.ParsePrefix(meshCIDR)
@@ -128,6 +156,7 @@ func run(logger *slog.Logger) error {
 
 	// --- Wire application services ---
 	nsApp := namespace.NewNamespaceAppService(resourceStore, defaultCIDR, logger)
+	nsApp.SetTelemetry(metricsRec, traceExp)
 
 	// --- Initialize SPIRE Identity Manager if enabled ---
 	var identityManager outbound.IdentityManager
@@ -161,6 +190,8 @@ func run(logger *slog.Logger) error {
 		DNSZone:     dnsZone,
 		TrustDomain: spireTrustDomain,
 		Logger:      logger,
+		Metrics:     metricsRec,
+		Tracer:      traceExp,
 	})
 
 	// NodeLivenessTracker backed by etcd leases
@@ -169,17 +200,23 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("create node tracker: %w", err)
 	}
 	defer nodeTracker.Close()
+	nodeTracker.SetTelemetry(metricsRec, traceExp)
 
 	routeApp := route.NewRouteAppService(resourceStore, stateStore, targetApp, logger)
+	routeApp.SetTelemetry(metricsRec, traceExp)
 	nodeApp := node.NewNodeAppService(stateStore, nodeTracker, routeApp, logger)
+	nodeApp.SetTelemetry(metricsRec, traceExp)
 
 	validator := domainservice.NewPolicyValidator()
 	policyApp := policy.NewTrafficPolicyAppService(policyStore, resourceStore, validator, logger)
+	policyApp.SetTelemetry(metricsRec, traceExp)
 
 	healthApp := health.NewHealthAppService(healthStore, nodeTracker, logger)
+	healthApp.SetTelemetry(metricsRec, traceExp)
 
 	authzEvaluator := domainservice.NewAuthzEvaluator()
 	authzApp := authz.NewAuthzAppService(resourceStore, depStore, authzEvaluator, logger)
+	authzApp.SetTelemetry(metricsRec, traceExp)
 
 	scopeApp := scope.NewAgentScopeAppService(
 		resourceStore,
@@ -193,10 +230,23 @@ func run(logger *slog.Logger) error {
 		nsApp,
 		logger.WithGroup("scope_app"),
 	)
+	scopeApp.SetTelemetry(metricsRec, traceExp)
+
+	telemetryApp := telemetry.NewTelemetryService(telemetry.Config{
+		Telemetry:   telCfg,
+		Metrics:     metricsRec,
+		Tracer:      traceExp,
+		Shutdowns:   []outbound.TelemetryShutdown{metricsRec, traceExp},
+		NodeTracker: nodeTracker,
+		StateStore:  stateStore,
+		Logger:      logger.WithGroup("telemetry"),
+	})
 
 	// --- gRPC Servers Setup ---
 	controlServer := grpcadapter.NewControlPlaneServer(svcApp, nsApp, targetApp, policyApp, authzApp, logger)
+	controlServer.SetTelemetry(metricsRec, traceExp)
 	agentServer := grpcadapter.NewAgentServer(nodeApp, healthApp, scopeApp, routeApp, logger)
+	agentServer.SetTelemetry(metricsRec, traceExp)
 
 	routeApp.SetScopeDistributor(agentServer)
 	routeApp.SetNodeTracker(nodeTracker)
@@ -252,12 +302,42 @@ func run(logger *slog.Logger) error {
 		}
 	}()
 
+	metricsCollector := etcdstore.NewMetricsCollector(
+		etcdClient,
+		defaultCIDR,
+		telCfg.Metrics.ExportInterval,
+		metricsRec,
+		logger.WithGroup("etcd_metrics"),
+	)
+	go metricsCollector.Run(ctx)
+
+	var obsServer *httpadapter.ObservabilityServer
+	if telCfg.Metrics.Enabled {
+		obsServer = httpadapter.NewObservabilityServer(
+			telCfg.Metrics.Endpoint,
+			metricsRec.Handler(),
+			telemetryApp,
+			logger.WithGroup("observability_http"),
+		)
+		go func() {
+			if err := obsServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("observability HTTP server failed", "error", err)
+			}
+		}()
+	}
+
+	unaryInterceptor := grpcadapter.UnaryServerInterceptor(metricsRec, traceExp)
+	streamInterceptor := grpcadapter.StreamServerInterceptor(metricsRec, traceExp)
+
 	// 1. Control Plane Server (CLI / REST Gateway)
 	controlLis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		return fmt.Errorf("listen control plane %s: %w", grpcAddr, err)
 	}
-	controlGrpcServer := grpc.NewServer()
+	controlGrpcServer := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(unaryInterceptor),
+		grpc.ChainStreamInterceptor(streamInterceptor),
+	)
 	omnimeshv1.RegisterControlPlaneServiceServer(controlGrpcServer, controlServer)
 
 	// 2. Agent Server (Sidecars / Proxies)
@@ -266,7 +346,10 @@ func run(logger *slog.Logger) error {
 		// Single listener mode: register AgentService on controlGrpcServer
 		omnimeshv1.RegisterAgentServiceServer(controlGrpcServer, agentServer)
 	} else {
-		var agentServerOpts []grpc.ServerOption
+		agentServerOpts := []grpc.ServerOption{
+			grpc.ChainUnaryInterceptor(unaryInterceptor),
+			grpc.ChainStreamInterceptor(streamInterceptor),
+		}
 		if spireEnabled {
 			logger.Info("configuring SPIRE mTLS for Agent gRPC server", "agentAddr", spireAgentAddr, "trustDomain", spireTrustDomain)
 			agentCreds, agentSource, err := spire.NewServerCredentials(ctx, spireAgentAddr, spireTrustDomain)
@@ -322,6 +405,16 @@ func run(logger *slog.Logger) error {
 				agentGrpcServer.Stop()
 			}
 		}
+
+		if obsServer != nil {
+			if err := obsServer.Shutdown(ctxEnd); err != nil {
+				logger.Warn("observability HTTP server shutdown error", "error", err)
+			}
+		}
+		if err := telemetryApp.Shutdown(ctxEnd); err != nil {
+			logger.Warn("telemetry shutdown error", "error", err)
+		}
+
 		logger.Info("gRPC servers stopped")
 	}()
 

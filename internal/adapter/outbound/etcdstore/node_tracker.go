@@ -6,8 +6,11 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/esachser/omnimeshcontrol/internal/domain/model"
 	"github.com/esachser/omnimeshcontrol/internal/domain/service"
+	"github.com/esachser/omnimeshcontrol/internal/port/outbound"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -30,6 +33,8 @@ type NodeLivenessTracker struct {
 	nodes    map[string]*liveNode
 	onLost   []service.NodeLivenessCallback
 	logger   *slog.Logger
+	metrics  outbound.MetricsRecorder
+	tracer   outbound.TraceExporter
 
 	watchCancel context.CancelFunc
 }
@@ -57,11 +62,19 @@ func NewNodeLivenessTracker(client *clientv3.Client, leaseTTL int64, logger *slo
 		leaseTTL:    leaseTTL,
 		nodes:       make(map[string]*liveNode),
 		logger:      logger,
+		metrics:     noopMetrics{},
+		tracer:      noopTracer{},
 		watchCancel: watchCancel,
 	}
 
 	go t.watchLiveness(watchCtx)
 	return t, nil
+}
+
+// SetTelemetry configures optional metrics and tracing recorders.
+func (t *NodeLivenessTracker) SetTelemetry(metrics outbound.MetricsRecorder, tracer outbound.TraceExporter) {
+	t.metrics = ensureMetrics(metrics)
+	t.tracer = ensureTracer(tracer)
 }
 
 // watchLiveness runs a background etcd watcher that fires OnNodeLost callbacks
@@ -129,7 +142,9 @@ func (t *NodeLivenessTracker) TrackNode(nodeID string) (service.LeaseID, error) 
 	t.mu.Unlock()
 
 	// Grant a new lease.
+	grantStart := time.Now()
 	grantResp, err := t.client.Grant(context.Background(), t.leaseTTL)
+	recordEtcdOp(context.Background(), t.metrics, nil, "txn", grantStart, err)
 	if err != nil {
 		return 0, fmt.Errorf("node tracker: grant lease for %q: %w", nodeID, err)
 	}
@@ -137,8 +152,10 @@ func (t *NodeLivenessTracker) TrackNode(nodeID string) (service.LeaseID, error) 
 
 	// Put the liveness key attached to the new lease.
 	livenessKey := livenessPrefix + nodeID
-	if _, err := t.client.Put(context.Background(), livenessKey, "1",
-		clientv3.WithLease(leaseID)); err != nil {
+	putStart := time.Now()
+	_, err = t.client.Put(context.Background(), livenessKey, "1", clientv3.WithLease(leaseID))
+	recordEtcdOp(context.Background(), t.metrics, nil, "put", putStart, err)
+	if err != nil {
 		t.client.Revoke(context.Background(), leaseID) //nolint:errcheck
 		return 0, fmt.Errorf("node tracker: put liveness key for %q: %w", nodeID, err)
 	}
@@ -152,12 +169,25 @@ func (t *NodeLivenessTracker) TrackNode(nodeID string) (service.LeaseID, error) 
 		return 0, fmt.Errorf("node tracker: start keepalive for %q: %w", nodeID, err)
 	}
 
-	// Drain keepalive responses in the background.
-	go func() {
+	// Drain keepalive responses in the background and record heartbeat metrics.
+	go func(nID string, lid clientv3.LeaseID, kctx context.Context) {
 		for range kaCh {
-			// responses just confirm the lease is renewed; nothing to do.
+			t.metrics.IncrCounter(context.Background(), model.MetricCPNodesHeartbeatTotal, map[string]string{
+				"node_id": nID,
+			})
 		}
-	}()
+		if kctx.Err() == nil {
+			t.mu.Lock()
+			cur, ok := t.nodes[nID]
+			unexpected := ok && cur.leaseID == lid && !cur.disconnected
+			t.mu.Unlock()
+			if unexpected {
+				t.metrics.IncrCounter(context.Background(), model.MetricCPNodesHeartbeatMissed, map[string]string{
+					"node_id": nID,
+				})
+			}
+		}
+	}(nodeID, leaseID, kaCtx)
 
 	t.mu.Lock()
 	t.nodes[nodeID] = &liveNode{leaseID: leaseID, kaCancel: kaCancel}
@@ -182,7 +212,7 @@ func (t *NodeLivenessTracker) OnDisconnect(nodeID string) {
 	if !ok {
 		return
 	}
-	node.kaCancel()         // stop keepalive; lease will expire after TTL
+	node.kaCancel()          // stop keepalive; lease will expire after TTL
 	node.disconnected = true // mark as grace-period-pending
 	t.logger.Info("node keepalive stopped — lease TTL counting down",
 		"nodeID", nodeID,
